@@ -1,0 +1,473 @@
+#!/usr/bin/env python3
+"""
+Assign Template Generator for MRT Tasks
+Generates text data for MCQ tasks based on rendered images and guidance videos.
+"""
+
+import json
+import random
+import argparse
+import subprocess
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional, Any
+from dataclasses import dataclass
+
+# Text templates
+# QUESTION_TEMPLATE = """Given the original cubestack <image1>, which cubestack shown in the following images can be obtained by rotating or spining the original cubestack?\nA. <image2> B. <image3> C. <image4> D. <image5>. Answer with one letter: A, B, C or D."""
+QUESTION_TEMPLATE = """Given the original cubestack <visual>, which cubestack shown in the following images can be obtained by rotating or spining the original cubestack?\nA. <visual> B. <visual> C. <visual> D. <visual>. Answer with one letter: A, B, C or D."""
+
+# Path configuration
+PATH_PREFIX = "/root/autodl-fs/data/3dr-training"
+DEFAULT_FPS = 30
+DEFAULT_VIDEO_START = 0.0
+
+# Reasoning templates
+# EASY_REASONING_TEMPLATE = '''<think>For Choice A, I need to visually imagine the rotation in the given cubestack to judge whether they are the same cubestack. {reason_a}; Choice B {reason_b}, Choice C {reason_c}, Choice D {reason_d}
+EASY_REASONING_TEMPLATE = '''<think>Based on the initial observation, the original cubestack appears to be posed differently from the options. I will mentally rotate it to align its orientation with rest of the cubestacks and determine their equivalence.<visual>
+Option A {reason_a};\nOption B {reason_b};\nOption C {reason_c};\nOption D {reason_d}.
+</think><answer>{answer}</answer>'''
+
+HARD_REASONING_TEMPLATE = '''Based on the initial observation, the original cubestack appears to be posed differently from the options. I will mentally rotate it to align its orientation with each candidate cubestack and determine if they are the same cubestack.
+Option A {reason_a};\nOption B {reason_b};\nOption C {reason_c};\nOption D {reason_d}.
+</think><answer>{answer}</answer>'''
+
+# Reason templates for different option types
+# EASY_REASONS = {
+#     'answer': 'matches the rotated original cube in my imagination',
+#     'mirror1': 'based on the rotation imagination, the cubestack is mirror-symmetric to the original and can not be obtained by rotating the original cube',
+#     'mirror2': 'based on the rotation imagination, the cubestack is mirror-symmetric to the original and can not be obtained by rotating the original cube',
+#     'move': 'is obtained by moving one cube\'s position',
+#     'remove': 'misses one cube compared to the original cube, so it can not be obtained by rotating the original.'
+# }
+
+EASY_REASONS = {
+    'answer': 'matches the rotated original structure in my imagination',
+    'mirror1': 'based on my imagination, the cubestack is mirror-symmetric to the original and cannot be produced by any rotation',
+    'mirror2': 'based on my imagination, the cubestack is mirror-symmetric to the original and cannot be obtained via rotating the original cube',
+    'move': "structure is obtained by moving one cube from the original cubestack, so they aren't the same structure",
+    'remove': 'misses one cube compared to the original structure so they aren’t the same cube and rotation-equivalent'
+}
+
+# HARD_REASONS = {
+#     'answer': '<guidance_answer>\nAfter visually rotating the original cube, it matches the cubestack structure in the choice B;',
+#     'mirror1': '<guidance_mirror1>\nAfter visually rotating the original, the cubestack of this option is mirror-symmetric to the original and cannot be obtained by rotating the original cubestack',
+#     'mirror2': '<guidance_mirror2>\n the cubestack is mirror-symmetric to the original under my imagination rotation and cannot be obtained by rotating the original cubestack',
+#     'move': {
+#         'under_guidance': "<guidance_move> After viusally imagine the original cubastack rotating to the same pose as the option, it is obvious that the option structure is obtained by moving one cube from the original structure, so it can't be produced through rotating the original",
+#         'no_guidance': "structure is obtained by moving one cube from the original structure, so it can't be produced through rotating the original"
+#     },
+#     'remove': {
+#         'under_guidance': '<guidance_remove> After viusally imagine the original cubastack rotating to the same pose, I can notice that the option misses one cube compared to the original cubestack, so it cannot be obtained by rotating the original',
+#         'no_guidance': 'misses one cube compared to the original cubestack, so it cannot be obtained by rotating the original'
+#     },
+# }
+
+HARD_REASONS = {
+    'answer': '<visuak>\nAfter visually rotating the original cube, it matches the cubestack structure in the choice B',
+    'mirror1': '<visual>\nAfter visually rotating the original, the cubestack of this option is mirror-symmetric to the original and cannot be obtained by rotating the original cubestack',
+    'mirror2': '<visual>\n the cubestack is mirror-symmetric to the original under my imagination rotation and cannot be obtained by rotating the original cubestack',
+    'move': {
+        'under_guidance': "<visual> After viusally imagine the original cubastack rotating to the same pose as the option, it is obvious that the option structure is obtained by moving one cube from the original structure, so it can't be produced through rotating the original",
+        'no_guidance': "structure is obtained by moving one cube from the original structure, so it can't be produced through rotating the original"
+    },
+    'remove': {
+        'under_guidance': '<visual> After viusally imagine the original cubastack rotating to the same pose, I can notice that the option misses one cube compared to the original cubestack, so it cannot be obtained by rotating the original',
+        'no_guidance': 'misses one cube compared to the original cubestack, so it cannot be obtained by rotating the original'
+    },
+}
+
+@dataclass
+class TaskData:
+    """Task data structure"""
+    category: str  # 'easy' or 'hard'
+    id: str  # instance ID like 'mrt_h001'
+    text_input: str
+    assign: Dict[str, str]  # {'A': 'answer', 'B': 'mirror1', ...}
+    visual_input: List[Dict[str, str]]
+    visual_output: List[Dict[str, Any]]
+    answer: str
+    text_output: str
+
+
+def generate_assign_choices(category: str, modify_type: str = "modify") -> Dict[str, str]:
+    """
+    Generate random ABCD assignment for images and guidance videos.
+    
+    Args:
+        category: 'easy' or 'hard'
+        modify_type: 'move' or 'remove' based on voxel count analysis
+    
+    Returns:
+        Dictionary mapping A,B,C,D to image types
+    """
+    if category == 'easy':
+        # Easy: answer, mirror1, mirror2, modify
+        options = ['answer', 'mirror1', 'mirror2', modify_type]
+        random.shuffle(options)
+        return {
+            'A': options[0],
+            'B': options[1], 
+            'C': options[2],
+            'D': options[3]
+        }
+    else:  # hard
+        # Hard: answer, mirror1, mirror2, modify
+        options = ['answer', 'mirror1', 'mirror2', modify_type]
+        random.shuffle(options)
+        return {
+            'A': options[0],
+            'B': options[1],
+            'C': options[2], 
+            'D': options[3]
+        }
+
+
+def get_image_order(assign: Dict[str, str], instance_id: str) -> List[str]:
+    """
+    Get ordered list of image filenames based on assignment.
+    
+    Args:
+        assign: ABCD assignment dictionary
+        instance_id: Instance ID like 'mrt_h001'
+    
+    Returns:
+        List of image filenames in order A,B,C,D
+    """
+    image_mapping = {
+        'answer': f'{instance_id}_answer.jpg',
+        'mirror1': f'{instance_id}_mirror1.jpg', 
+        'mirror2': f'{instance_id}_mirror2.jpg',
+        'move': f'{instance_id}_move.jpg',
+        'remove': f'{instance_id}_remove.jpg',
+        'modify': f'{instance_id}_modify.jpg'  # fallback
+    }
+    
+    return [image_mapping[assign[key]] for key in ['A', 'B', 'C', 'D']]
+
+
+def get_guidance_order(assign: Dict[str, str], instance_id: str, category: str, modify_type: str) -> List[str]:
+    """
+    Get ordered list of guidance video filenames based on assignment.
+    
+    Args:
+        assign: ABCD assignment dictionary
+        instance_id: Instance ID like 'mrt_h001'
+        category: 'easy' or 'hard'
+        modify_type: 'move' or 'remove'
+    
+    Returns:
+        List of guidance filenames or '<no_guidance>' placeholders
+    """
+    if category == 'easy':
+        # Easy only has one guidance video
+        return [f'{instance_id}_guidance_easy.mp4']
+    else:
+        # Hard has guidance for each option
+        guidance_mapping = {
+            'answer': f'{instance_id}_guidance_answer.mp4',
+            'mirror1': f'{instance_id}_guidance_mirror1.mp4',
+            'mirror2': f'{instance_id}_guidance_mirror2.mp4',
+            'move': f'{instance_id}_guidance_move.mp4',
+            'remove': f'{instance_id}_guidance_remove.mp4',
+            'modify': f'{instance_id}_guidance_modify.mp4'  # fallback
+        }
+        
+        guidance_list = []
+        for key in ['A', 'B', 'C', 'D']:
+            option = assign[key]
+            if option == modify_type:
+                # For modify options, randomly choose guidance or no_guidance
+                if random.choice([True, False]):
+                    guidance_list.append(guidance_mapping[option])
+                else:
+                    guidance_list.append('<no_guidance>')
+            else:
+                guidance_list.append(guidance_mapping[option])
+        
+        return guidance_list
+
+
+def determine_answer(assign: Dict[str, str]) -> str:
+    """
+    Determine the correct answer based on assignment.
+    The answer is always the option that maps to 'answer'.
+    
+    Args:
+        assign: ABCD assignment dictionary
+    
+    Returns:
+        Answer string like 'A.' or 'B.'
+    """
+    for key, value in assign.items():
+        if value == 'answer':
+            return f'{key}.'
+    return 'A.'  # fallback
+
+
+def generate_reasoning(answer: str, category: str, assign: Dict[str, str], guidance: List[str]) -> str:
+    """
+    Generate reasoning text using appropriate template based on category and assignment.
+    
+    Args:
+        answer: Answer string like 'A.'
+        category: 'easy' or 'hard'
+        assign: Dictionary mapping A,B,C,D to option types
+        guidance: List of guidance videos or '<no_guidance>' placeholders
+    
+    Returns:
+        Reasoning text
+    """
+    # Get reason templates based on category
+    reasons_dict = EASY_REASONS if category == 'easy' else HARD_REASONS
+    
+    # Generate reasons for each choice
+    reason_a = _get_reason_for_choice(assign['A'], reasons_dict, guidance[0] if len(guidance) > 0 else None)
+    reason_b = _get_reason_for_choice(assign['B'], reasons_dict, guidance[1] if len(guidance) > 1 else None)
+    reason_c = _get_reason_for_choice(assign['C'], reasons_dict, guidance[2] if len(guidance) > 2 else None)
+    reason_d = _get_reason_for_choice(assign['D'], reasons_dict, guidance[3] if len(guidance) > 3 else None)
+    
+    # Choose template based on category
+    template = EASY_REASONING_TEMPLATE if category == 'easy' else HARD_REASONING_TEMPLATE
+    
+    return template.format(
+        answer=answer,
+        reason_a=reason_a,
+        reason_b=reason_b,
+        reason_c=reason_c,
+        reason_d=reason_d
+    )
+
+
+def _get_reason_for_choice(option_type: str, reasons_dict: Dict, guidance_item: str = None) -> str:
+    """
+    Get reason text for a specific option type.
+    
+    Args:
+        option_type: Type of option ('answer', 'mirror1', 'mirror2', 'move', 'remove')
+        reasons_dict: Dictionary containing reason templates
+        guidance_item: Guidance video filename or '<no_guidance>'
+    
+    Returns:
+        Reason text for the option
+    """
+    if option_type not in reasons_dict:
+        return f"unknown option type: {option_type}"
+    
+    reason_template = reasons_dict[option_type]
+    
+    # For move/remove in hard mode, check if guidance is available
+    if isinstance(reason_template, dict):
+        if guidance_item == '<no_guidance>':
+            return reason_template['no_guidance']
+        else:
+            return reason_template['under_guidance']
+    else:
+        return reason_template
+
+
+
+def get_video_duration(video_path: Path) -> float:
+    """
+    Get video duration in seconds using ffprobe.
+    
+    Args:
+        video_path: Path to video file
+    
+    Returns:
+        Duration in seconds, or 2.0 as default if unavailable
+    """
+    try:
+        cmd = [
+            "ffprobe",
+            "-v", "quiet",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(video_path)
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+    except Exception:
+        pass
+    return 2.0  # Default duration
+
+
+def detect_modify_type(instance_dir: Path) -> str:
+    """
+    Detect whether the modify variant is 'move' or 'remove' based on file existence.
+    
+    Args:
+        instance_dir: Path to instance directory
+    
+    Returns:
+        'move' or 'remove'
+    """
+    task_dir = instance_dir / 'task'
+    if (task_dir / f'{instance_dir.name}_move.jpg').exists():
+        return 'move'
+    elif (task_dir / f'{instance_dir.name}_remove.jpg').exists():
+        return 'remove'
+    else:
+        return 'modify'  # fallback
+
+
+def generate_task_data(instance_dir: Path) -> Optional[TaskData]:
+    """
+    Generate task data for a single instance.
+    
+    Args:
+        instance_dir: Path to instance directory
+    
+    Returns:
+        TaskData object or None if instance is invalid
+    """
+    instance_id = instance_dir.name
+    
+    # Determine category
+    if instance_id.startswith('mrt_e'):
+        category = 'easy'
+    elif instance_id.startswith('mrt_h'):
+        category = 'hard'
+    else:
+        return None
+    
+    # Detect modify type
+    modify_type = detect_modify_type(instance_dir)
+    
+    # Generate assignment
+    assign = generate_assign_choices(category, modify_type)
+    
+    # Generate question
+    text_input = QUESTION_TEMPLATE
+    
+    # Get image order (including original image as first element)
+    option_images = get_image_order(assign, instance_id)
+    image_filenames = [f'{instance_id}_question.jpg'] + option_images
+    
+    # Build visual_input as list of objects
+    visual_input = []
+    for img_filename in image_filenames:
+        img_path = f"{PATH_PREFIX}/{instance_id}/task/{img_filename}"
+        visual_input.append({
+            "type": "image",
+            "path": img_path
+        })
+    
+    # Get guidance video filenames
+    guidance_filenames = get_guidance_order(assign, instance_id, category, modify_type)
+    
+    # Build visual_output as list of objects
+    visual_output = []
+    for guidance_filename in guidance_filenames:
+        if guidance_filename == '<no_guidance>':
+            continue  # Skip no_guidance entries
+        video_path_obj = instance_dir / 'guidance' / guidance_filename
+        video_duration = get_video_duration(video_path_obj) if video_path_obj.exists() else 2.0
+        video_path = f"{PATH_PREFIX}/{instance_id}/guidance/{guidance_filename}"
+        visual_output.append({
+            "type": "video",
+            "path": video_path,
+            "fps": DEFAULT_FPS,
+            "video_start": DEFAULT_VIDEO_START,
+            "video_end": video_duration
+        })
+    
+    # For reasoning generation, use the full guidance_filenames list (including '<no_guidance>')
+    # to maintain correct index mapping (A=0, B=1, C=2, D=3)
+    # Determine answer and reasoning
+    answer = determine_answer(assign)
+    text_output = generate_reasoning(answer, category, assign, guidance_filenames)
+    
+    return TaskData(
+        category=category,
+        id=instance_id,
+        text_input=text_input,
+        assign=assign,
+        visual_input=visual_input,
+        visual_output=visual_output,
+        answer=answer,
+        text_output=text_output
+    )
+
+
+def generate_all_task_data(batch_dir: Path, output_file: Path, limit_easy: int = None, limit_hard: int = None) -> None:
+    """
+    Generate task data for all instances in a batch.
+    
+    Args:
+        batch_dir: Path to batch directory
+        output_file: Path to output JSON file
+        limit_easy: Limit number of easy instances to process
+        limit_hard: Limit number of hard instances to process
+    """
+    instances = []
+    easy_count = 0
+    hard_count = 0
+    
+    # Find all instance directories
+    for item in batch_dir.iterdir():
+        if item.is_dir() and (item.name.startswith('mrt_e') or item.name.startswith('mrt_h')):
+            # Check limits
+            if item.name.startswith('mrt_e'):
+                if limit_easy is not None and easy_count >= limit_easy:
+                    continue
+                easy_count += 1
+            elif item.name.startswith('mrt_h'):
+                if limit_hard is not None and hard_count >= limit_hard:
+                    continue
+                hard_count += 1
+            
+            task_data = generate_task_data(item)
+            if task_data:
+                instances.append(task_data)
+    
+    # Sort instances by ID
+    instances.sort(key=lambda x: x.id)
+    
+    # Save to JSONL file (one JSON object per line)
+    with open(output_file, 'w', encoding='utf-8') as f:
+        for task in instances:
+            task_dict = {
+                "category": task.category,
+                "id": task.id,
+                "text_input": task.text_input,
+                "assign": task.assign,
+                "visual_input": task.visual_input,
+                "visual_output": task.visual_output,
+                "answer": task.answer,
+                "text_output": task.text_output
+            }
+            f.write(json.dumps(task_dict, ensure_ascii=False) + "\n")
+    
+    print(f"Generated task data for {len(instances)} instances")
+    print(f"Saved to: {output_file}")
+
+
+def main():
+    """Main function"""
+    parser = argparse.ArgumentParser(description='Generate assign template data for MRT tasks')
+    parser.add_argument('batch_dir', type=str, help='Path to batch directory')
+    parser.add_argument('--output', '-o', type=str, help='Output JSONL file path (default: batch_dir/assign_data.jsonl)')
+    parser.add_argument('--fps', type=int, default=30, help='Frame rate for videos (default: 30)')
+    
+    args = parser.parse_args()
+    
+    batch_dir = Path(args.batch_dir)
+    if not batch_dir.exists():
+        print(f"Error: Batch directory does not exist: {batch_dir}")
+        return
+    
+    if args.output:
+        output_file = Path(args.output)
+    else:
+        output_file = batch_dir / 'assign_data.jsonl'
+    
+    # Update DEFAULT_FPS if provided
+    global DEFAULT_FPS
+    DEFAULT_FPS = args.fps
+    
+    generate_all_task_data(batch_dir, output_file)
+
+
+if __name__ == '__main__':
+    main()

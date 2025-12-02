@@ -1,0 +1,88 @@
+__pycache__/
+VARIANTS_LOGIC.md
+
+# video files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+
+# media directories
+**/batch_*/
+**/medias/
+**/videos/
+**/images/
+**/Tex/
+**/meta/
+
+# compressed files
+*.zip
+*.tar.gz
+*.tar
+*.rar
+*.7z
+
+# temporary data files
+assign_data.json
+assign_data.jsonl
+meta_mrt_*.json
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Linux
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*.orig
+
+# Manim 
+*.partial_movie
+
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.feather
+*.parquet
+
+
+*.backup
+*.old
+
+test/output/
+test/media/
