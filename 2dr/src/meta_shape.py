@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-2D图形数据定义模块
-生成JSON配置数据供渲染使用
-"""
+# Meta: grid + variant (s0–s4) JSON generation. Rotation-group checks keep options distinct. See README.md.
 
 from __future__ import annotations
 from dataclasses import dataclass
@@ -15,112 +12,96 @@ import math
 from datetime import datetime
 
 
-# ============================================================================
-# 参数配置 - 所有采样范围集中在这里（按层次组织）
-# ============================================================================
+# --- Config (grid, color, texture, rotation) ---
 
-BATCH_SIZE = 5
-# ========== 1. 网格尺寸配置 ==========
-GRID_SIZE_RANGE = (2, 3)  # 支持的网格尺寸：2x2, 3x3, 4x4
-GRID_SCALE_RANGE = (0.5, 0.8)  # 整体网格占画幅比例：50%-80%
-FRAME_HEIGHT = 8.0  # Manim默认画幅高度
+SAMPLES = 5
+# --- 1. Grid size ---
+GRID_SIZE_RANGE = (2, 3)
+GRID_SCALE_RANGE = (0.5, 0.8)
+FRAME_HEIGHT = 8.0
 
-# Pattern最小1的数量（针对color模式）
+# Min ones per pattern (color mode)
 PATTERN_MIN_ONES = {
-    1: 1,  # 1x1网格至少1个
-    2: 3,  # 2x2网格至少3个
-    3: 3,   # 3x3网格至少3个
+    1: 1,
+    2: 3,
+    3: 3,
     4: 4
 }
 
-# ========== 2. 颜色配置 ==========
+# --- 2. Colors ---
 COLOR_POOL = ["BLUE", "RED", "GREEN", "ORANGE", "PINK", "PURPLE", "GRAY", "YELLOW"]
-GRID_COLOR_POOL = ["BLACK", "WHITE", "GRAY"]  # 网格颜色：黑、白、灰
+GRID_COLOR_POOL = ["BLACK", "WHITE", "GRAY"]
 
-# ========== 3. 纹理配置 ==========
-TEXTURE_TYPE_POOL = ["line", "polygon"]  # 纹理类型（line, polygon）
-LINE_DIRECTION_POOL = ["vertical", "horizontal", "left_slash", "right_slash"]  # 线条方向
-POLYGON_SHAPE_POOL = ["square", "circle", "diamond"]  # 多边形形状
-TEXTURE_OPACITY_RANGE = (0.85, 1.0)  # 纹理透明度范围（较不透明）
-TEXTURE_COLOR_MODE = "grid"  # 选项："cell"使用cell颜色，"random"随机颜色，"grid"黑白灰
+# --- 3. Texture ---
+TEXTURE_TYPE_POOL = ["line", "polygon"]
+LINE_DIRECTION_POOL = ["vertical", "horizontal", "left_slash", "right_slash"]
+POLYGON_SHAPE_POOL = ["square", "circle", "diamond"]
+TEXTURE_OPACITY_RANGE = (0.85, 1.0)
+TEXTURE_COLOR_MODE = "grid"
 
-# ========== 4. 样式参数配置 ==========
-FILL_OPACITY_RANGE = (0.6, 1.0)  # 填充透明度范围
-STROKE_WIDTH_RANGE = (1.5, 3.0)  # 边框宽度范围
-STROKE_COLOR_MODE = "grid"  # 边框颜色模式："white"固定白色，"grid"从GRID_COLOR_POOL选
+# --- 4. Style ---
+FILL_OPACITY_RANGE = (0.6, 1.0)
+STROKE_WIDTH_RANGE = (1.5, 3.0)
+STROKE_COLOR_MODE = "grid"
 
-# ========== 5. 模式配置 ==========
-SHOW_GRID_OPTIONS = [True]  # 是否显示边线 True or False
+# --- 5. Mode ---
+SHOW_GRID_OPTIONS = [True]
 
-# ========== 6. Rotation配置 ==========
-ROTATION_ANGLES_RANGE = (90, 90)  # 旋转角度范围（度）
-CLOCKWISE_OPTIONS = [True, False]  # 顺时针/逆时针
-ROTATION_SPEED_OPTIONS = ["fast", "medium"]  # 旋转速度
+# --- 6. Rotation ---
+ROTATION_ANGLES_RANGE = (90, 90)
+CLOCKWISE_OPTIONS = [True, False]
+ROTATION_SPEED_OPTIONS = ["fast", "medium"]
 ROTATION_SPEED_FACTOR = {
-    "fast": 0.016,    # 快速：每秒转60度 (1/60 = 0.016)
-    "medium": 0.022,  # 中等：每秒转45度 (1/45 = 0.022)
-    "slow": 0.033      # 慢速：每秒转30度 (1/20 = 0.05)
+    "fast": 0.016,
+    "medium": 0.022,
+    "slow": 0.033
 }
 
-# ========== 7. Video配置 ==========
-BACKGROUND_COLORS = ["#1a1a2e", "#000000"]  # 背景色：深蓝、黑色
+# --- 7. Video ---
+BACKGROUND_COLORS = ["#1a1a2e", "#000000"]
 
 
-# ==================== 样式类型枚举 ====================
+# --- Style / texture enums ---
 
 class StyleType(Enum):
-    """样式类型枚举"""
-    COLOR = "color"           # 纯色填充
-    TEXTURE = "texture"       # 纹理填充
+    COLOR = "color"
+    TEXTURE = "texture"
 
 
 class TextureType(Enum):
-    """纹理类型枚举"""
-    LINE = "line"             # 线条
-    POLYGON = "polygon"       # 多边形（包括triangle, square, circle, star）
+    LINE = "line"
+    POLYGON = "polygon"
 
 class LineDirection(Enum):
-    """线条方向枚举"""
-    VERTICAL = "vertical"      # 垂直
-    HORIZONTAL = "horizontal" # 水平
-    LEFT_SLASH = "left_slash"  # 左斜
-    RIGHT_SLASH = "right_slash" # 右斜
+    VERTICAL = "vertical"
+    HORIZONTAL = "horizontal"
+    LEFT_SLASH = "left_slash"
+    RIGHT_SLASH = "right_slash"
 
 
 class PolygonShape(Enum):
-    """多边形形状枚举"""
-    TRIANGLE = "triangle"      # 三角形 (n=3)
-    SQUARE = "square"           # 正方形 (n=4)
-    CIRCLE = "circle"           # 圆形 (Circle)
-    DIAMOND = "diamond"         # 菱形
+    TRIANGLE = "triangle"
+    SQUARE = "square"
+    CIRCLE = "circle"
+    DIAMOND = "diamond"
 
 
-# ==================== 网格单元样式配置 ====================
+# --- Grid cell style ---
 
 @dataclass
 class GridCellStyle:
-    """网格单元样式配置"""
     style_type: StyleType = StyleType.COLOR
-    
-    # color样式
     color: str = "BLUE"
-    
-    # texture样式
     texture_type: Optional[TextureType] = None
-    line_direction: Optional[LineDirection] = None  # 当texture_type=line时使用
-    polygon_shape: Optional[PolygonShape] = None  # 当texture_type=polygon时使用
-    
-    # 视觉参数（从顶部参数配置导入）
-    fill_opacity: float = 0.8  # 默认值，可在生成时随机化
-    stroke_width: float = 2.0  # 默认值，可在生成时随机化
+    line_direction: Optional[LineDirection] = None
+    polygon_shape: Optional[PolygonShape] = None
+    fill_opacity: float = 0.8
+    stroke_width: float = 2.0
     stroke_color: str = "WHITE"
-    
-    # texture专用参数
-    texture_opacity: float = 1.0  # 纹理透明度（0-1）
-    texture_color: Optional[str] = None  # 纹理颜色，None表示使用cell颜色
+    texture_opacity: float = 1.0
+    texture_color: Optional[str] = None
     
     def __post_init__(self):
-        """初始化后处理"""
         if self.style_type == StyleType.TEXTURE:
             if self.texture_type == TextureType.LINE and self.line_direction is None:
                 self.line_direction = LineDirection.VERTICAL
@@ -129,7 +110,6 @@ class GridCellStyle:
     
     @classmethod
     def random_style(cls) -> 'GridCellStyle':
-        """随机生成样式"""
         style_type = random.choice(list(StyleType))
         
         if style_type == StyleType.COLOR:
@@ -137,17 +117,15 @@ class GridCellStyle:
                 style_type=style_type,
                 color=random.choice(COLOR_POOL)
             )
-        else:  # TEXTURE
+        else:
             texture = random.choice(TEXTURE_TYPE_POOL)
             texture_type = TextureType(texture)
-            
-            # 生成texture颜色和透明度
             if TEXTURE_COLOR_MODE == "random":
                 texture_color_val = random.choice(COLOR_POOL)
             elif TEXTURE_COLOR_MODE == "grid":
                 texture_color_val = random.choice(GRID_COLOR_POOL)
-            else:  # "cell"
-                texture_color_val = None  # 使用cell颜色
+            else:
+                texture_color_val = None
             
             texture_opacity_val = random.uniform(*TEXTURE_OPACITY_RANGE)
             
@@ -161,7 +139,7 @@ class GridCellStyle:
                     texture_opacity=texture_opacity_val,
                     texture_color=texture_color_val
                 )
-            else:  # POLYGON
+            else:
                 shape = random.choice(POLYGON_SHAPE_POOL)
                 return cls(
                     style_type=style_type,
@@ -173,7 +151,7 @@ class GridCellStyle:
                 )
     
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
+        '''Convert to dict.'''
         result = {
             "style_type": self.style_type.value,
             "color": self.color,
@@ -188,7 +166,6 @@ class GridCellStyle:
                 result["line_direction"] = self.line_direction.value
             if self.polygon_shape:
                 result["polygon_shape"] = self.polygon_shape.value
-            # 添加texture专用参数
             result["texture_opacity"] = self.texture_opacity
             if self.texture_color:
                 result["texture_color"] = self.texture_color
@@ -197,7 +174,6 @@ class GridCellStyle:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'GridCellStyle':
-        """从字典创建"""
         style_type = StyleType(data.get("style_type", "color"))
         
         result = cls(
@@ -222,38 +198,28 @@ class GridCellStyle:
         return result
 
 
-# ==================== Pattern生成辅助函数 ====================
+# --- Pattern helpers ---
 
 def count_ones_in_pattern(pattern: List[List[int]]) -> int:
-    """统计pattern中1的数量"""
     return sum(sum(row) for row in pattern)
 
 
 def is_connected_pattern(pattern: List[List[int]]) -> bool:
-    """检查pattern是否连通（DFS）"""
     rows, cols = len(pattern), len(pattern[0])
-    
-    # 找到所有1的位置
     ones = []
     for i in range(rows):
         for j in range(cols):
             if pattern[i][j] == 1:
                 ones.append((i, j))
-    
     if not ones:
         return False
-    
-    # 从第一个1开始DFS
     visited = set()
     stack = [ones[0]]
-    
     while stack:
         r, c = stack.pop()
         if (r, c) in visited:
             continue
         visited.add((r, c))
-        
-        # 检查相邻的1
         for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
             nr, nc = r + dr, c + dc
             if 0 <= nr < rows and 0 <= nc < cols:
@@ -264,26 +230,21 @@ def is_connected_pattern(pattern: List[List[int]]) -> bool:
 
 
 def generate_horizontal_mirror(pattern: List[List[int]]) -> List[List[int]]:
-    """生成水平镜像（上下镜像）"""
+    '''Horizontal mirror (flip up-down).'''
     return pattern[::-1]
 
 
 def generate_vertical_mirror(pattern: List[List[int]]) -> List[List[int]]:
-    """生成垂直镜像（左右镜像）"""
+    '''Vertical mirror (flip left-right).'''
     return [row[::-1] for row in pattern]
 
 
 def generate_horizontal_mirror_with_styles(pattern: List[List[int]], cell_colors: List[Dict[str, Any]]) -> Tuple[List[List[int]], List[Dict[str, Any]]]:
-    """生成水平镜像（上下镜像）- 同时镜像pattern和cell_colors"""
+    '''Horizontal mirror for pattern and cell_colors.'''
     rows = len(pattern)
     cols = len(pattern[0]) if pattern else 0
     mirrored_pattern = pattern[::-1]
-    
-    # 创建位置映射：原pattern的(i,j)对应镜像后的(rows-1-i,j)
-    # 同时翻转cell_colors的顺序
     mirrored_colors = []
-    
-    # 按镜像后的pattern遍历，找到对应的原cell_colors
     color_map = {}
     color_idx = 0
     for i in range(rows):
@@ -292,11 +253,11 @@ def generate_horizontal_mirror_with_styles(pattern: List[List[int]], cell_colors
                 color_map[(i, j)] = cell_colors[color_idx]
                 color_idx += 1
     
-    # 按镜像后的pattern顺序重建colors
+    # Rebuild colors in mirrored order
     for i in range(rows):
         for j in range(cols):
             if mirrored_pattern[i][j] == 1:
-                orig_i = rows - 1 - i  # 反转到原位置
+                orig_i = rows - 1 - i
                 orig_j = j
                 mirrored_colors.append(color_map[(orig_i, orig_j)])
     
@@ -304,16 +265,11 @@ def generate_horizontal_mirror_with_styles(pattern: List[List[int]], cell_colors
 
 
 def generate_vertical_mirror_with_styles(pattern: List[List[int]], cell_colors: List[Dict[str, Any]]) -> Tuple[List[List[int]], List[Dict[str, Any]]]:
-    """生成垂直镜像（左右镜像）- 同时镜像pattern和cell_colors"""
+    '''Vertical mirror for pattern and cell_colors.'''
     rows = len(pattern)
     cols = len(pattern[0]) if pattern else 0
     mirrored_pattern = [row[::-1] for row in pattern]
-    
-    # 创建位置映射：原pattern的(i,j)对应镜像后的(i, cols-1-j)
-    # 同时翻转cell_colors的顺序
     mirrored_colors = []
-    
-    # 按镜像后的pattern遍历，找到对应的原cell_colors
     color_map = {}
     color_idx = 0
     for i in range(rows):
@@ -322,27 +278,27 @@ def generate_vertical_mirror_with_styles(pattern: List[List[int]], cell_colors: 
                 color_map[(i, j)] = cell_colors[color_idx]
                 color_idx += 1
     
-    # 按镜像后的pattern顺序重建colors
+    # Rebuild colors in mirrored order
     for i in range(rows):
         for j in range(cols):
             if mirrored_pattern[i][j] == 1:
                 orig_i = i
-                orig_j = cols - 1 - j  # 反转到原位置
+                orig_j = cols - 1 - j
                 mirrored_colors.append(color_map[(orig_i, orig_j)])
     
     return mirrored_pattern, mirrored_colors
 
 
 def add_cell_to_pattern(pattern: List[List[int]], rows: int, cols: int) -> List[List[int]]:
-    """添加一个连通cell到pattern（不能超出原pattern的行列范围）"""
+    '''Add one connected cell to pattern (within grid bounds).'''
     
-    # 找到所有1的位置
+    # Collect ones
     ones = [(i, j) for i in range(rows) for j in range(cols) if pattern[i][j] == 1]
     
     if not ones:
         return pattern
     
-    # 找到所有0的相邻位置
+    # Neighbors of ones
     zeros = []
     for r, c in ones:
         for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
@@ -361,11 +317,11 @@ def add_cell_to_pattern(pattern: List[List[int]], rows: int, cols: int) -> List[
 
 
 def swap_cells_with_different_styles(pattern: List[List[int]], cell_colors: List[Dict[str, Any]]) -> List[List[int]]:
-    """交换cells，但只交换style不同的cells"""
+    '''Swap cells with different styles only.'''
     rows = len(pattern)
     cols = len(pattern[0]) if pattern else 0
     
-    # 找到所有1的位置及其样式
+    # Ones with styles
     ones_positions = []
     color_idx = 0
     for i in range(rows):
@@ -377,13 +333,13 @@ def swap_cells_with_different_styles(pattern: List[List[int]], cell_colors: List
                 })
                 color_idx += 1
     
-    # 找到所有0的位置
+    # Zeros
     zeros_positions = [(i, j) for i in range(rows) for j in range(cols) if pattern[i][j] == 0]
     
     if len(ones_positions) == 0 or len(zeros_positions) == 0:
         return pattern
     
-    # 找到style不同的cell对
+    # Pairs with different style
     different_style_pairs = []
     for i in range(len(ones_positions)):
         for j in range(i + 1, len(ones_positions)):
@@ -392,7 +348,7 @@ def swap_cells_with_different_styles(pattern: List[List[int]], cell_colors: List
             if style1 != style2:
                 different_style_pairs.append((i, j))
     
-    # 如果找到不同的style，随机选择一个进行交换
+    # Swap one pair
     if different_style_pairs:
         idx1, idx2 = random.choice(different_style_pairs)
         pos1 = ones_positions[idx1]["pos"]
@@ -408,21 +364,21 @@ def swap_cells_with_different_styles(pattern: List[List[int]], cell_colors: List
 
 
 def remove_cell_from_pattern(pattern: List[List[int]]) -> List[List[int]]:
-    """从pattern中删除一个cell（保证连通性）"""
+    '''Remove one cell from pattern (keep connected).'''
     size = len(pattern)
     
-    # 找到所有1的位置
+    # Collect ones
     ones = [(i, j) for i in range(size) for j in range(size) if pattern[i][j] == 1]
     
     if len(ones) <= 1:
         return pattern
     
-    # 尝试删除一个cell，检查连通性
+    # Try remove, keep connected
     for r, c in random.sample(ones, min(len(ones), 10)):
         new_pattern = [row[:] for row in pattern]
         new_pattern[r][c] = 0
         
-        # 检查是否连通
+        # Check connected
         if is_connected_pattern(new_pattern):
             return new_pattern
     
@@ -430,18 +386,18 @@ def remove_cell_from_pattern(pattern: List[List[int]]) -> List[List[int]]:
 
 
 def swap_cells_in_pattern(pattern: List[List[int]]) -> List[List[int]]:
-    """随机交换两个cells（保持1的总数不变）"""
+    '''Randomly swap two cells (keep total ones).'''
     size = len(pattern)
     
-    # 找到所有1的位置
+    # Collect ones
     ones = [(i, j) for i in range(size) for j in range(size) if pattern[i][j] == 1]
-    # 找到所有0的位置
+    # Zeros
     zeros = [(i, j) for i in range(size) for j in range(size) if pattern[i][j] == 0]
     
     if len(ones) == 0 or len(zeros) == 0:
         return pattern
     
-    # 随机选择一个1和一个0，交换它们
+    # Swap one 1 and one 0
     r1, c1 = random.choice(ones)
     r0, c0 = random.choice(zeros)
     
@@ -449,7 +405,7 @@ def swap_cells_in_pattern(pattern: List[List[int]]) -> List[List[int]]:
     new_pattern[r1][c1] = 0
     new_pattern[r0][c0] = 1
     
-    # 检查连通性
+    # Check connected
     if is_connected_pattern(new_pattern):
         return new_pattern
     
@@ -457,15 +413,10 @@ def swap_cells_in_pattern(pattern: List[List[int]]) -> List[List[int]]:
 
 
 def is_symmetric_pattern(pattern: List[List[int]]) -> bool:
-    """检查pattern是否对称（水平、垂直、或都对称）
-    Args:
-        pattern: 网格pattern
-    Returns:
-        True如果pattern有任何对称性
-    """
+    '''Check if pattern is symmetric (H, V, or both). Returns True if any.'''
     size = len(pattern)
     
-    # 检查水平对称（上下镜像）
+    # Horizontal symmetry
     horizontal_sym = True
     for i in range(size):
         for j in range(size):
@@ -475,7 +426,7 @@ def is_symmetric_pattern(pattern: List[List[int]]) -> bool:
         if not horizontal_sym:
             break
     
-    # 检查垂直对称（左右镜像）
+    # Vertical symmetry
     vertical_sym = True
     for i in range(size):
         for j in range(size):
@@ -489,34 +440,30 @@ def is_symmetric_pattern(pattern: List[List[int]]) -> bool:
 
 
 def generate_random_pattern(size: int, min_ones: int) -> List[List[int]]:
-    """生成随机的连通pattern（非对称）
-    Args:
-        size: 网格尺寸
-        min_ones: 最少1的数量
-    """
+    '''Generate random connected asymmetric pattern. Args: size, min_ones.'''
     total_cells = size * size
     
-    # 随机确定1的数量（在min_ones和total_cells之间）
+    # Num ones
     num_ones = random.randint(min_ones, total_cells)
     
-    # 生成所有位置
+    # All positions
     all_positions = [(i, j) for i in range(size) for j in range(size)]
     
-    max_attempts = 500  # 增加尝试次数以保证生成非对称pattern
+    max_attempts = 500
     for attempt in range(max_attempts):
-        # 随机选择num_ones个位置
+        # Pick positions
         selected = random.sample(all_positions, num_ones)
         
-        # 创建pattern
+        # Build pattern
         pattern = [[0 for _ in range(size)] for _ in range(size)]
         for r, c in selected:
             pattern[r][c] = 1
         
-        # 检查连通性和非对称性
+        # Check connected and asymmetric
         if is_connected_pattern(pattern) and not is_symmetric_pattern(pattern):
             return pattern
     
-    # 如果无法生成非对称连通的，生成连通的（允许对称）
+    # Fallback: connected only
     for attempt in range(100):
         selected = random.sample(all_positions, num_ones)
         pattern = [[0 for _ in range(size)] for _ in range(size)]
@@ -525,75 +472,58 @@ def generate_random_pattern(size: int, min_ones: int) -> List[List[int]]:
         if is_connected_pattern(pattern):
             return pattern
     
-    # 最后返回全1
+    # Fallback: all ones
     return [[1 for _ in range(size)] for _ in range(size)]
 
 
 @dataclass
 class GridStyle:
-    """网格样式配置"""
+    '''Grid style config.'''
     rows: int = 2
     cols: int = 2
     cell_size: float = 1.0
-    pattern: Optional[List[List[int]]] = None  # 0/1矩阵，None表示全1（完整网格）
+    pattern: Optional[List[List[int]]] = None
     cell_styles: List[GridCellStyle] = None
-    show_grid: bool = True  # 是否显示边线
+    show_grid: bool = True
     
     def __post_init__(self):
-        """初始化后处理"""
-        # 如果pattern为None，生成全1矩阵（完整网格）
+        '''Post-init validation.'''
+        # Default full grid
         if self.pattern is None:
             self.pattern = [[1 for _ in range(self.cols)] for _ in range(self.rows)]
         
-        # 确保pattern尺寸与rows/cols一致
         if len(self.pattern) != self.rows:
-            raise ValueError(f"pattern行数({len(self.pattern)})与rows({self.rows})不一致")
+            raise ValueError(f"pattern rows {len(self.pattern)} != rows {self.rows}")
         if len(self.pattern[0]) != self.cols:
-            raise ValueError(f"pattern列数({len(self.pattern[0])})与cols({self.cols})不一致")
+            raise ValueError(f"pattern cols {len(self.pattern[0])} != cols {self.cols}")
         
         if self.cell_styles is None:
-            # 统计需要样式的单元格数量（pattern中为1的位置）
             total_cells = sum(sum(row) for row in self.pattern)
             self.cell_styles = [GridCellStyle.random_style() for _ in range(total_cells)]
     
     @classmethod
     def generate_random(cls, grid_size_range: Tuple[int, int] = GRID_SIZE_RANGE, global_mode: str = "texture") -> 'GridStyle':
-        """生成随机网格样式
-        
-        生成逻辑：
-        1. 确定color模式/texture模式
-        2. 确定grid size: 1x1-3x3（均为居中）和对应pattern矩阵，要求是连通的：
-           - texture mode: 全1矩阵
-           - color mode: 进行随机采样pattern矩阵（1x1固定为1；2x2至少有两个；3x3至少有3个）
-        3. 随机采样show grid: true/false
-        4. 对于color mode对应pattern依次采样颜色；对于texture采样一种统一颜色然后依次采样样式
-        
-        Args:
-            grid_size_range: 网格尺寸范围
-            global_mode: 全局模式 "color" 或 "texture"
-        """
-        # 1. 确定grid size和cell_size（根据整体scale计算，考虑旋转对角线）
+        '''Generate random grid style (color/texture, grid size, pattern, show_grid, colors/styles).'''
+        # 1. Grid size and cell_size
         size = random.randint(*grid_size_range)
-        # 随机选择整体grid占画幅的比例
+
         scale = random.uniform(*GRID_SCALE_RANGE)
-        # 根据整体grid大小计算每个cell的大小，考虑旋转时对角线的最大长度
-        # 旋转时对角线长度为 size * cell_size * sqrt(2) ≤ FRAME_HEIGHT * scale
-        # 所以：cell_size ≤ (FRAME_HEIGHT * scale) / (size * sqrt(2))
+        # cell_size so that size*cell_size*sqrt(2) <= FRAME_HEIGHT*scale
         cell_size = (FRAME_HEIGHT * scale) / (size * math.sqrt(2))
         
-        # 2. 根据模式生成pattern
+        # 2. Pattern
         if global_mode == "color":
-            # COLOR模式：生成连通的pattern
+
             min_ones = PATTERN_MIN_ONES.get(size, 1)
             pattern = generate_random_pattern(size, min_ones)
         else:  # texture mode
-            # TEXTURE模式：全1矩阵
+
             pattern = [[1 for _ in range(size)] for _ in range(size)]
         
-        # 3. 随机采样show_grid
+        # 3. show_grid
         show_grid = random.choice(SHOW_GRID_OPTIONS)
         
-        # 4. 创建grid_style（先不创建cell_styles）
+        # 4. grid_style
         grid_style = cls(
             rows=size,
             cols=size,
@@ -603,21 +533,20 @@ class GridStyle:
             cell_styles=[]
         )
         
-        # 5. 统一采样样式参数（全局只采样一次）
+        # 5. Style params (global, sampled once)
         fill_opacity = random.uniform(*FILL_OPACITY_RANGE)
         stroke_width = random.uniform(*STROKE_WIDTH_RANGE)
         
-        # 选择边框颜色
+
         if STROKE_COLOR_MODE == "grid":
             stroke_color_val = random.choice(GRID_COLOR_POOL)
         else:  # "white"
             stroke_color_val = "WHITE"
         
-        # 6. 根据模式生成cell_styles
+        # 6. cell_styles
         num_ones = count_ones_in_pattern(pattern)
         
         if global_mode == "color":
-            # COLOR模式：依次采样颜色（样式参数统一）
             for _ in range(num_ones):
                 random_color = random.choice(COLOR_POOL)
                 grid_style.cell_styles.append(GridCellStyle(
@@ -628,22 +557,21 @@ class GridStyle:
                     stroke_color=stroke_color_val
                 ))
         else:  # texture mode
-            # TEXTURE模式：采样一种统一颜色，然后依次采样样式
             base_color = random.choice(COLOR_POOL)
             
-            # 生成texture颜色和透明度
+
             if TEXTURE_COLOR_MODE == "random":
                 texture_color_val = random.choice(COLOR_POOL)
             elif TEXTURE_COLOR_MODE == "grid":
-                # grid模式：texture颜色和边框颜色相同
+
                 texture_color_val = stroke_color_val
             else:  # "cell"
-                texture_color_val = None  # 使用cell颜色
+                texture_color_val = None
             
             texture_opacity_val = random.uniform(*TEXTURE_OPACITY_RANGE)
             
             for _ in range(num_ones):
-                # 随机选择texture类型
+
                 texture_type = random.choice(TEXTURE_TYPE_POOL)
                 
                 if texture_type == "line":
@@ -676,7 +604,7 @@ class GridStyle:
         return grid_style
     
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
+        '''Convert to dict.'''
         result = {
             "rows": self.rows,
             "cols": self.cols,
@@ -684,7 +612,7 @@ class GridStyle:
             "show_grid": self.show_grid,
             "cell_styles": [style.to_dict() for style in self.cell_styles]
         }
-        # 如果是全1 pattern，则不保存（节省空间）
+        # Skip pattern if all ones
         all_ones = all(all(cell == 1 for cell in row) for row in self.pattern)
         if not all_ones:
             result["pattern"] = self.pattern
@@ -692,13 +620,13 @@ class GridStyle:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'GridStyle':
-        """从字典创建"""
+        '''Create from dict.'''
         cell_styles = [
             GridCellStyle.from_dict(style_data) 
             for style_data in data.get("cell_styles", [])
         ]
         
-        # 如果字典中没有pattern，则为None（会自动生成全1矩阵）
+        # pattern default
         pattern = data.get("pattern", None)
         
         return cls(
@@ -711,13 +639,99 @@ class GridStyle:
         )
 
 
-# ==================== JSON生成工具 ====================
+# --- JSON generation ---
+
+def _cells_canonical(cells: List[Dict[str, Any]]) -> Tuple[Tuple[Any, ...], ...]:
+    '''Canonical comparable form of cells (sorted by (r,c), appearance keys only).'''
+    key = lambda c: (c["pos"][0], c["pos"][1])
+    out = []
+    for cell in sorted(cells, key=key):
+        r, c = cell["pos"]
+        out.append((
+            r, c,
+            cell.get("color"),
+            cell.get("texture_type"),
+            cell.get("line_direction"),
+            cell.get("polygon_shape"),
+        ))
+    return tuple(out)
+
+
+def _rotate_cells_90_cw(cells: List[Dict[str, Any]], rows: int, cols: int) -> List[Dict[str, Any]]:
+    '''90 deg CW: (r,c)->(c,rows-1-r); line dirs swapped.'''
+    result = []
+    for cell in cells:
+        r, c = cell["pos"]
+        new_r, new_c = c, rows - 1 - r
+        new_cell = {**cell, "pos": [new_r, new_c]}
+        ld = new_cell.get("line_direction")
+        if ld == "vertical":
+            new_cell["line_direction"] = "horizontal"
+        elif ld == "horizontal":
+            new_cell["line_direction"] = "vertical"
+        elif ld == "left_slash":
+            new_cell["line_direction"] = "right_slash"
+        elif ld == "right_slash":
+            new_cell["line_direction"] = "left_slash"
+        result.append(new_cell)
+    return result
+
+
+def _rotate_cells_90_ccw(cells: List[Dict[str, Any]], rows: int, cols: int) -> List[Dict[str, Any]]:
+    '''90 deg CCW: (r,c)->(cols-1-c,r); line dirs swapped.'''
+    result = []
+    for cell in cells:
+        r, c = cell["pos"]
+        new_r, new_c = cols - 1 - c, r
+        new_cell = {**cell, "pos": [new_r, new_c]}
+        ld = new_cell.get("line_direction")
+        if ld == "vertical":
+            new_cell["line_direction"] = "horizontal"
+        elif ld == "horizontal":
+            new_cell["line_direction"] = "vertical"
+        elif ld == "left_slash":
+            new_cell["line_direction"] = "right_slash"
+        elif ld == "right_slash":
+            new_cell["line_direction"] = "left_slash"
+        result.append(new_cell)
+    return result
+
+
+def _mirror_cells_diag_main(cells: List[Dict[str, Any]], rows: int, cols: int) -> List[Dict[str, Any]]:
+    '''Main diagonal mirror (r,c)->(c,r); slash dirs swapped.'''
+    result = []
+    for cell in cells:
+        r, c = cell["pos"]
+        new_cell = {**cell, "pos": [c, r]}
+        ld = new_cell.get("line_direction")
+        if ld == "left_slash":
+            new_cell["line_direction"] = "right_slash"
+        elif ld == "right_slash":
+            new_cell["line_direction"] = "left_slash"
+        result.append(new_cell)
+    return result
+
+
+def _mirror_cells_diag_anti(cells: List[Dict[str, Any]], rows: int, cols: int) -> List[Dict[str, Any]]:
+    '''Anti diagonal mirror (r,c)->(cols-1-c,rows-1-r); slash dirs swapped.'''
+    result = []
+    for cell in cells:
+        r, c = cell["pos"]
+        new_cell = {**cell, "pos": [cols - 1 - c, rows - 1 - r]}
+        ld = new_cell.get("line_direction")
+        if ld == "left_slash":
+            new_cell["line_direction"] = "right_slash"
+        elif ld == "right_slash":
+            new_cell["line_direction"] = "left_slash"
+        result.append(new_cell)
+    return result
+
 
 def _generate_rotation_config() -> Dict[str, Any]:
-    """生成rotation配置（只包含renderer实际使用的字段）"""
+    '''Build rotation config (fields used by renderer).'''
     speed = random.choice(ROTATION_SPEED_OPTIONS)
     angle = round(random.uniform(*ROTATION_ANGLES_RANGE), 1)
-    # duration = 旋转角度 * 速度系数
+
     duration = angle * ROTATION_SPEED_FACTOR[speed]
     clockwise = random.choice(CLOCKWISE_OPTIONS)
     
@@ -725,7 +739,7 @@ def _generate_rotation_config() -> Dict[str, Any]:
         "rotation_angle": angle,
         "clockwise": clockwise,
         "speed": speed,
-        "duration": round(duration, 2),  # 保留2位小数
+        "duration": round(duration, 2),
         "direction": {
             "clockwise": clockwise,
             "angle": angle
@@ -734,30 +748,25 @@ def _generate_rotation_config() -> Dict[str, Any]:
 
 
 def _generate_video_config() -> Dict[str, Any]:
-    """生成video配置（精简版，只包含renderer使用的字段）"""
+    '''Build video config for renderer.'''
     return {
         "background_color": random.choice(BACKGROUND_COLORS)
     }
 
-def generate_json_config(grid_size: int = 3, global_mode: str = "color", filename: str = "default") -> Dict[str, Any]:
-    """生成单条JSON配置（包含variants）
-    
-    Args:
-        grid_size: 网格尺寸 (1, 2, 3)
-        global_mode: "color" 或 "texture"
-        filename: 输出文件名
-    
-    Returns:
-        精简的数据配置JSON（只包含object, rotation, video, variants）
-    """
+def generate_json_config(grid_size: int = 3, global_mode: str = "color", filename: str = "default", _retry: int = 0) -> Dict[str, Any]:
+    '''Generate single JSON config with variants.'''
+    max_retries = 50
     grid_style = GridStyle.generate_random(
         grid_size_range=(grid_size, grid_size),
         global_mode=global_mode
     )
+    rotation_config = _generate_rotation_config()
+    clockwise = rotation_config["direction"]["clockwise"]
+    rows, cols = grid_style.rows, grid_style.cols
     
     pattern = grid_style.pattern if not all(all(cell == 1 for cell in row) for row in grid_style.pattern) else None
     
-    # 提取统一的样式参数（所有cell共享）
+# Uniform style
     first_cell_style = grid_style.cell_styles[0] if grid_style.cell_styles else GridCellStyle("color", "BLUE", 0.8, 2.0, "WHITE")
     uniform_styles = {
         "fill_opacity": first_cell_style.fill_opacity,
@@ -770,9 +779,9 @@ def generate_json_config(grid_size: int = 3, global_mode: str = "color", filenam
         if hasattr(first_cell_style, 'texture_color'):
             uniform_styles["texture_color"] = first_cell_style.texture_color
     
-    # 生成cells（包含位置信息）
+# pattern_to_cells
     def pattern_to_cells(p: List[List[int]]) -> List[Dict[str, Any]]:
-        """将pattern转换为cells列表"""
+        '''Convert pattern to cells list.'''
         cells = []
         style_idx = 0
         for r in range(len(p)):
@@ -783,10 +792,10 @@ def generate_json_config(grid_size: int = 3, global_mode: str = "color", filenam
                     
                     cell = {"pos": [r, c]}
                     if global_mode == "color":
-                        # color模式
+
                         cell["color"] = style.color
-                    else:  # texture模式
-                        # texture模式
+                    else:
+
                         cell["color"] = style.color
                         if style.texture_type:
                             cell["texture_type"] = style.texture_type.value
@@ -798,20 +807,20 @@ def generate_json_config(grid_size: int = 3, global_mode: str = "color", filenam
         return cells
     
     def mirror_cells_vertical(cells: List[Dict[str, Any]], rows: int, cols: int) -> List[Dict[str, Any]]:
-        """垂直镜像cells：将每个cell的pos进行垂直镜像变换"""
-        # 对于每个cell的pos=[r, c]
-        # 新的行 = rows - 1 - r
-        # 新的pos = [rows - 1 - r, c]
+        '''Vertical mirror: mirror each cell pos.'''
+
+
+
         
         mirrored_cells = []
         for cell in cells:
             r, c = cell["pos"]
-            # 计算镜像位置
+
             mirror_r = rows - 1 - r
-            # 创建新cell，保持所有内容，只变换pos
+
             new_cell = {**cell, "pos": [mirror_r, c]}
             
-            # 统一互换slash方向（无需判断位置）
+
             line_dir = new_cell.get("line_direction")
             if line_dir == "left_slash":
                 new_cell["line_direction"] = "right_slash"
@@ -823,20 +832,19 @@ def generate_json_config(grid_size: int = 3, global_mode: str = "color", filenam
         return mirrored_cells
     
     def mirror_cells_horizontal(cells: List[Dict[str, Any]], rows: int, cols: int) -> List[Dict[str, Any]]:
-        """水平镜像cells：将每个cell的pos进行水平镜像变换"""
-        # 对于每个cell的pos=[r, c]
-        # 新的列 = cols - 1 - c
-        # 新的pos = [r, cols - 1 - c]
+        '''Horizontal mirror: mirror each cell pos.'''
+
+        # new col = cols - 1 - c, new pos = [r, cols-1-c]
         
         mirrored_cells = []
         for cell in cells:
             r, c = cell["pos"]
-            # 计算镜像位置
+
             mirror_c = cols - 1 - c
-            # 创建新cell，保持所有内容，只变换pos
+
             new_cell = {**cell, "pos": [r, mirror_c]}
             
-            # 统一互换slash方向（无需判断位置）
+
             line_dir = new_cell.get("line_direction")
             if line_dir == "left_slash":
                 new_cell["line_direction"] = "right_slash"
@@ -848,11 +856,11 @@ def generate_json_config(grid_size: int = 3, global_mode: str = "color", filenam
         return mirrored_cells
     
     def add_cell_to_cells(cells: List[Dict[str, Any]], rows: int, cols: int) -> List[Dict[str, Any]]:
-        """添加一个连通cell到cells"""
-        # 找到所有已占用的位置
+        '''Add one connected cell to cells.'''
+# Used positions
         used_positions = set(tuple(cell["pos"]) for cell in cells)
         
-        # 找到所有0的位置（邻居）
+        # Neighbors
         neighbors = []
         for cell in cells:
             r, c = cell["pos"]
@@ -863,17 +871,17 @@ def generate_json_config(grid_size: int = 3, global_mode: str = "color", filenam
                         neighbors.append((nr, nc))
         
         if neighbors:
-            # 随机添加一个
+
             import random as rand_module
             new_r, new_c = rand_module.choice(neighbors)
-            # 使用第一个cell的样式作为新cell
+
             new_cell = {**cells[0], "pos": [new_r, new_c]}
             return cells + [new_cell]
         
         return cells.copy()
     
     def modify_cell_for_s4(cells: List[Dict[str, Any]], mode: str) -> Tuple[List[Dict[str, Any]], str]:
-        """s4变体：根据mode进行不同处理"""
+        '''s4 variant: handle by mode (color/texture/etc).'''
         import random as rand_module
         
         if len(cells) <= 1:
@@ -882,17 +890,17 @@ def generate_json_config(grid_size: int = 3, global_mode: str = "color", filenam
         result_cells = [cell.copy() for cell in cells]
         
         if mode == "color":
-            # color模式：随机改变一个cell的颜色
+
             idx = rand_module.randint(0, len(result_cells) - 1)
             modified_cell = result_cells[idx].copy()
-            # 随机选择一个新的color
+
             new_color = rand_module.choice(["BLUE", "RED", "GREEN", "ORANGE", "PINK", "PURPLE", "YELLOW"])
             modified_cell["color"] = new_color
             result_cells[idx] = modified_cell
             return result_cells, "modify_color"
         
-        else:  # texture模式
-            # 找到所有斜线cells
+        else:
+# Slash cells
             slash_cells = []
             for i, cell in enumerate(result_cells):
                 line_dir = cell.get("line_direction")
@@ -900,16 +908,16 @@ def generate_json_config(grid_size: int = 3, global_mode: str = "color", filenam
                     slash_cells.append((i, cell, line_dir))
             
             if slash_cells:
-                # 有斜线，随机选择一个改变方向
+
                 idx, cell, line_dir = rand_module.choice(slash_cells)
                 modified_cell = cell.copy()
-                # 切换斜线方向
+
                 new_dir = "right_slash" if line_dir == "left_slash" else "left_slash"
                 modified_cell["line_direction"] = new_dir
                 result_cells[idx] = modified_cell
                 return result_cells, "modify_slash"
             
-            # 没有斜线，找方向线
+# Direction lines
             direction_cells = []
             for i, cell in enumerate(result_cells):
                 line_dir = cell.get("line_direction")
@@ -917,34 +925,34 @@ def generate_json_config(grid_size: int = 3, global_mode: str = "color", filenam
                     direction_cells.append((i, cell, line_dir))
             
             if direction_cells:
-                # 有方向线，随机选择一个改变方向
+
                 idx, cell, line_dir = rand_module.choice(direction_cells)
                 modified_cell = cell.copy()
-                # 切换方向
+
                 new_dir = "horizontal" if line_dir == "vertical" else "vertical"
                 modified_cell["line_direction"] = new_dir
                 result_cells[idx] = modified_cell
                 return result_cells, "modify_direction"
             
-            # 都没有，随机删除一个cell
+# Remove cell
             idx_to_remove = rand_module.choice(range(1, len(result_cells)))
             removed_cells = result_cells[:idx_to_remove] + result_cells[idx_to_remove+1:]
             return removed_cells, "remove_cell"
     
     def swap_cells_positions(cells: List[Dict[str, Any]], rows: int, cols: int) -> List[Dict[str, Any]]:
-        """交换两个不同样式的cells的pos"""
+        '''Swap pos of two cells with different styles.'''
         if len(cells) <= 1:
             return cells.copy()
         
         import random as rand_module
         
-        # 找到不同样式的cells对
+# Different-style pairs
         different_pairs = []
         for i in range(len(cells)):
             for j in range(i + 1, len(cells)):
                 c1, c2 = cells[i], cells[j]
                 
-                # 检查是否不同（color, texture_type, line_direction, polygon_shape）
+# Diff check, texture_type, line_direction, polygon_shape）
                 color_diff = c1.get("color") != c2.get("color")
                 texture_diff = c1.get("texture_type") != c2.get("texture_type")
                 line_diff = c1.get("line_direction") != c2.get("line_direction")
@@ -957,95 +965,105 @@ def generate_json_config(grid_size: int = 3, global_mode: str = "color", filenam
         
         if different_pairs:
             idx1, idx2 = rand_module.choice(different_pairs)
-            # 交换pos
+
             cells_copy[idx1]["pos"], cells_copy[idx2]["pos"] = cells_copy[idx2]["pos"], cells_copy[idx1]["pos"]
         else:
-            # 所有cells样式相同，随机交换两个
+
             if len(cells) > 1:
                 idx1, idx2 = rand_module.sample(range(len(cells)), 2)
                 cells_copy[idx1]["pos"], cells_copy[idx2]["pos"] = cells_copy[idx2]["pos"], cells_copy[idx1]["pos"]
         
         return cells_copy
     
-    # 旧版cell_colors保留以兼容
-    cell_colors = []
-    for style in grid_style.cell_styles:
-        if global_mode == "color":
-            color_dict = {"color": style.color}
-        else:
-            color_dict = {"color": style.color}
-            if style.texture_type:
-                color_dict["texture_type"] = style.texture_type.value
-            if style.line_direction:
-                color_dict["line_direction"] = style.line_direction.value
-            if style.polygon_shape:
-                color_dict["polygon_shape"] = style.polygon_shape.value
-        cell_colors.append(color_dict)
-    
-    # 生成visual参数（统一视觉参数）
+# visual_params
     visual_params = {
         **uniform_styles,
         "cell_size": grid_style.cell_size,
         "show_grid": grid_style.show_grid
     }
     
-    # 生成variants的基础结构
+# variants
     variants = {}
     
-    # 将pattern转换为cells
+# base_cells
     if pattern and not all(all(cell == 1 for cell in row) for row in pattern):
         base_cells = pattern_to_cells(pattern)
     else:
-        # 全1矩阵
+
         base_cells = pattern_to_cells([[1 for _ in range(grid_style.cols)] for _ in range(grid_style.rows)])
     
-    # s0: original
+# s0
     variants["s0"] = {
         "cells": base_cells,
         "description": "original"
     }
     
-    # 生成其他variants
-    # s1: vertical mirror
+# s1-s4
+# s1
     s1_cells = mirror_cells_vertical(base_cells, grid_style.rows, grid_style.cols)
     variants["s1"] = {
         "cells": s1_cells,
         "description": "vertical_mirror"
     }
     
-    # s2: horizontal mirror
+# s2
     s2_cells = mirror_cells_horizontal(base_cells, grid_style.rows, grid_style.cols)
     variants["s2"] = {
         "cells": s2_cells,
         "description": "horizontal_mirror"
     }
     
-    # s3: swap cells（交换pos，原来是s5的逻辑）
+    # s3: swap (was s5)
     s3_cells = swap_cells_positions(base_cells, grid_style.rows, grid_style.cols)
     variants["s3"] = {
         "cells": s3_cells,
         "description": "swap"
     }
     
-    # s4: 根据mode修改cell
+# s4
     s4_cells, s4_description = modify_cell_for_s4(base_cells, global_mode)
+    
+# Rotation-group checks
+    def _apply_rotation(cells_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return _rotate_cells_90_cw(cells_list, rows, cols) if clockwise else _rotate_cells_90_ccw(cells_list, rows, cols)
+    R_s0 = _apply_rotation(base_cells)
+    R_s1 = _apply_rotation(s1_cells)
+    R_s2 = _apply_rotation(s2_cells)
+    R_s3 = _apply_rotation(s3_cells)
+    R_s4 = _apply_rotation(s4_cells)
+    canonicals = [_cells_canonical(R_s0), _cells_canonical(R_s1), _cells_canonical(R_s2), _cells_canonical(R_s3), _cells_canonical(R_s4)]
+    if len(set(canonicals)) != 5 and _retry < max_retries:
+        return generate_json_config(grid_size, global_mode, filename, _retry + 1)
+    mirror_H = _cells_canonical(mirror_cells_horizontal(base_cells, rows, cols))
+    mirror_V = _cells_canonical(mirror_cells_vertical(base_cells, rows, cols))
+    mirror_D1 = _cells_canonical(_mirror_cells_diag_main(base_cells, rows, cols))
+    mirror_D2 = _cells_canonical(_mirror_cells_diag_anti(base_cells, rows, cols))
+    mirrors = {mirror_H, mirror_V, mirror_D1, mirror_D2}
+    r1, r2 = _apply_rotation(base_cells), _apply_rotation(_apply_rotation(base_cells))
+    r3 = _apply_rotation(r2)
+    for rot_canon in (_cells_canonical(r1), _cells_canonical(r2), _cells_canonical(r3)):
+        if rot_canon in mirrors:
+            if _retry < max_retries:
+                return generate_json_config(grid_size, global_mode, filename, _retry + 1)
+            break
+    
     variants["s4"] = {
         "cells": s4_cells,
         "description": s4_description
     }
     
-    # s5: add cell（原来是s3的逻辑，暂且注释掉不启用）
+    # s5 add cell (commented out)
     # if len(base_cells) >= grid_style.rows * grid_style.cols:
-    #     # 已经满了，不做操作
+
     #     s5_cells = base_cells
     #     s5_description = None
     # else:
     #     s5_cells = add_cell_to_cells(base_cells, grid_style.rows, grid_style.cols)
-    #     # 检查是否真的添加了cell
+
     #     if len(s5_cells) > len(base_cells):
     #         s5_description = "add"
     #     else:
-    #         # 添加失败，不做操作
+    #         # add failed
     #         s5_description = None
     
     # variants["s5"] = {
@@ -1060,7 +1078,7 @@ def generate_json_config(grid_size: int = 3, global_mode: str = "color", filenam
         "cols": grid_style.cols,
         "mode": global_mode,
         "visual": visual_params,
-        "rotation": _generate_rotation_config(),
+        "rotation": rotation_config,
         "video": _generate_video_config(),
         "variants": variants
     }
@@ -1072,14 +1090,7 @@ def generate_batch_json_configs(
     global_mode: str = "color",
     filename_prefix: str = "config"
 ) -> List[Dict[str, Any]]:
-    """批量生成JSON配置
-    
-    Args:
-        num_configs: 生成配置数量
-        grid_size_range: 网格尺寸范围
-        global_mode: 全局模式
-        filename_prefix: 文件名前缀
-    """
+    '''Batch generate JSON configs.'''
     configs = []
     for i in range(num_configs):
         grid_size = random.randint(*grid_size_range)
@@ -1090,19 +1101,19 @@ def generate_batch_json_configs(
 
 
 def save_json_config(config: Dict[str, Any], filename: str):
-    """保存JSON配置到文件"""
+    '''Save JSON config to file.'''
     with open(filename, 'w') as f:
         json.dump(config, f, indent=2)
 
 
 def load_json_config(filename: str) -> Dict[str, Any]:
-    """从文件加载JSON配置"""
+    '''Load JSON config from file.'''
     with open(filename, 'r') as f:
         return json.load(f)
 
 
 def json_to_grid_style(config: Dict[str, Any]) -> GridStyle:
-    """从JSON配置创建GridStyle对象"""
+    '''Create GridStyle from JSON config.'''
     obj_data = config.get("object", {})
     
     return GridStyle.from_dict({
@@ -1116,72 +1127,59 @@ def json_to_grid_style(config: Dict[str, Any]) -> GridStyle:
 
 
 def generate_batch_to_directory(
-    batch_size: int = 10,
+    samples: int = 10,
     grid_size_range: Tuple[int, int] = (1, 3),
     global_mode: str = "color",
     output_dir: str = "medias"
 ) -> str:
-    """批量生成JSON配置并保存到带时间戳的目录
-    
-    Args:
-        batch_size: 生成数量
-        grid_size_range: 网格尺寸范围
-        global_mode: 全局模式
-        output_dir: 输出基础目录
-    
-    Returns:
-        创建的批次目录路径
-    """
-    # 创建批次目录名（带时间戳）
+    '''Generate batch to timestamped dir. Returns batch dir path.'''
+# Batch dir
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     batch_dir = os.path.join(output_dir, f"batch_{timestamp}")
+    shape_dir = os.path.join(batch_dir, "shape")
     
-    # 创建目录
-    os.makedirs(batch_dir, exist_ok=True)
+
+    os.makedirs(shape_dir, exist_ok=True)
     
-    print(f"📁 创建批次目录: {batch_dir}")
-    print(f"📝 生成 {batch_size} 个配置...")
+    print(f"Batch dir: {batch_dir}")
+    print(f"Generating {samples} configs to shape/ ...")
     
-    # 批量生成并保存
-    for i in range(batch_size):
+    for i in range(samples):
         grid_size = random.randint(*grid_size_range)
-        # 随机选择 color 或 texture 模式
+
         mode = global_mode if global_mode in ["color", "texture"] else random.choice(["color", "texture"])
         config = generate_json_config(grid_size, mode)
         
-        # 创建子目录：batch_datetime/2dr_XXX/
         sub_dir_name = f"2dr_{i+1:04d}"
-        sub_dir = os.path.join(batch_dir, sub_dir_name)
-        os.makedirs(sub_dir, exist_ok=True)
-        
-        # 保存为 2dr_XXX.json
         filename = f"{sub_dir_name}.json"
-        filepath = os.path.join(sub_dir, filename)
+        filepath = os.path.join(shape_dir, filename)
         save_json_config(config, filepath)
         
         if (i + 1) % 10 == 0:
-            print(f"  已生成 {i + 1}/{batch_size} 个配置")
+            print(f"  Generated {i + 1}/{samples}")
     
-    print(f"✓ 完成！所有配置已保存到: {batch_dir}")
+    print(f"Done. Configs saved to: {shape_dir}")
     
     return batch_dir
 
-if __name__ == "__main__":
+
+def main():
+    '''Entry: batch generate JSON to batch_dir/shape/.'''
     print("=" * 60)
-    print("2DR 批量JSON配置生成器")
+    print("2DR batch JSON config generator")
     print("=" * 60)
-    
-    # 生成配置（混合 color 和 texture 模式）
     batch_dir = generate_batch_to_directory(
-        batch_size=BATCH_SIZE,           # 生成10个配置
-        grid_size_range=GRID_SIZE_RANGE, # 使用配置文件中的grid尺寸范围
-        global_mode="mixed",             # 混合模式
-        output_dir="medias"              # 保存到2DR/medias/
+        samples=SAMPLES,
+        grid_size_range=GRID_SIZE_RANGE,
+        global_mode="mixed",
+        output_dir="medias",
     )
-    
-    print(f"\n生成的批次目录: {batch_dir}")
-    print("\n查看文件列表:")
-    import os
-    files = os.listdir(batch_dir)
-    print(f"  共 {len(files)} 个文件")
-    print(f"  示例: {files[0]}, {files[1]}")
+    print(f"\nBatch dir: {batch_dir}")
+    shape_dir = os.path.join(batch_dir, "shape")
+    if os.path.isdir(shape_dir):
+        files = os.listdir(shape_dir)
+        print(f"  shape/ has {len(files)} JSON files: {files[:3]}{'...' if len(files) > 3 else ''}")
+
+
+if __name__ == "__main__":
+    main()
