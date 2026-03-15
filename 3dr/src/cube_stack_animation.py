@@ -235,8 +235,8 @@ def load_config_from_file(filepath: Union[str, Path]) -> Tuple[VoxelData, Rotati
         voxel_data = VoxelData.from_template(voxel_config.get("data", "l_shape"))
     elif voxel_type == "file":
         voxel_data = VoxelData.from_file(voxel_config["data"])
-        else:
-            raise ValueError(f"Unknown voxel type: {voxel_type}")
+    else:
+        raise ValueError(f"Unknown voxel type: {voxel_type}")
 
     rotation_config = config.get("rotation", {})
     rotation_params = RotationParams.from_dict(rotation_config)
