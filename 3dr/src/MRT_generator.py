@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""
+MRT (Mental Rotation Task) config generator.
+
+Reads chiral voxel JSON, builds voxel groups (s0=original, s1/s2=mirrors, s3=modify),
+generates Easy/Hard instances with visual/rotation/video configs, and writes
+per-config JSON files plus a batch meta JSON under medias/batch_<timestamp>/shape/.
+"""
 from __future__ import annotations
 
 import json
@@ -11,96 +18,97 @@ from dataclasses import dataclass, asdict
 import itertools
 import numpy as np
 
-# ==================== 参数范围配置 ====================
-EASY_INSTANCE_NUM = 7 # 61*N
-HARD_INSTANCE_NUM = 7 # 61*N
+# ==================== Parameter ranges ====================
+EASY_INSTANCE_NUM = 7  # per-group (e.g. 61*N)
+HARD_INSTANCE_NUM = 7  # per-group
 
-# Cube visual 参数范围
+# Cube visual parameter ranges
 CUBE_SIZE_RANGE = (0.8, 1.2)
 SPACING_RANGE = (0.0, 0.0)
 FILL_OPACITY_RANGE = (0.7, 0.9)
 STROKE_WIDTH_RANGE = (1.0, 2.0)
 STROKE_OPACITY_RANGE = (0.8, 1.0)
 
-# 颜色池（用于 visual 配置）
+# Color pools for visual config
 FILL_COLOR_POOL = ["BLUE", "RED", "GREEN", "ORANGE", "PINK", "PURPLE", "GRAY"]
 STROKE_COLOR_POOL = ["WHITE", "BLACK"]
-        
-ROTATION_ANGLES_RANGE = (45, 135)  # 度数范围
-ROTATION_SPEEDS = ["slow", "medium"] # "slow", "medium", "fast"
-CENTER_MODES = ["mass", "cube"]  # 保持离散选择: "mass", "cube"
-CLOCKWISE_OPTIONS = [True, False]  # 保持离散选择
-    
-# Video 参数范围
-PHI_RANGE = (65, 70)    # 仰角范围
-THETA_RANGES = [(30, 60), (120, 150), (210, 240), (300, 330)]  # 方位角范围，4个离散范围
-ZOOM_RANGE = (1.2 ,1.9)
 
-# 可视化元素白名单（固定，不随机；为空则全部不显示）
-# 可选项："axes", "axes_labels", "rotation_axis", "rotation_circle", "velocity_arrow", "labels", "bounding_box"
+ROTATION_ANGLES_RANGE = (45, 135)  # degrees
+ROTATION_SPEEDS = ["slow", "medium"]  # "slow", "medium", "fast"
+CENTER_MODES = ["mass", "cube"]
+CLOCKWISE_OPTIONS = [True, False]
+
+# Video parameter ranges
+PHI_RANGE = (65, 70)    # elevation (degrees)
+THETA_RANGES = [(30, 60), (120, 150), (210, 240), (300, 330)]  # azimuth, 4 discrete ranges
+ZOOM_RANGE = (1.2, 1.9)
+
+# Visual elements whitelist (empty = none shown). Options: "axes", "axes_labels",
+# "rotation_axis", "rotation_circle", "velocity_arrow", "labels", "bounding_box"
 VISUAL_ELEMENTS_WHITELIST: List[str] = []
-    
-    # Output 配置
-PIXEL_WIDTHS = [1280]  # 720p (1280x720)
-PIXEL_HEIGHTS = [720]  # 720p
-FRAME_RATES = [30]  # 30fps
 
-# ==================== 数据结构定义 ====================
+# Output config (720p @ 30fps)
+PIXEL_WIDTHS = [1280]
+PIXEL_HEIGHTS = [720]
+FRAME_RATES = [30]
+
+# ==================== Data structures ====================
 
 @dataclass
 class VoxelGroup:
-    """一组voxel数据"""
+    """One voxel group: s0 (original), s1, s2 (mirrors), s3 (modify)."""
     group_id: int
-    voxels: List[List[List[int]]]  # s0, s1, s2, s3（每个元素是一整个体素结构：坐标列表）
+    voxels: List[List[List[int]]]  # s0, s1, s2, s3; each element is full voxel coords
     voxel_count: int
+
 
 @dataclass
 class Instance:
-    """一个实例"""
+    """Single MRT instance (Easy or Hard) with one voxel group and rotation configs."""
     instance_id: int
     difficulty: str  # "Easy" or "Hard"
     voxel_group: VoxelGroup
     visual_config: Dict[str, Any]
-    rotation_configs: List[Dict[str, Any]]  # Easy: 1个, Hard: 3个
+    rotation_configs: List[Dict[str, Any]]  # Easy: 1; Hard: 4 (r0..r3)
+
 
 @dataclass
 class MRTConfig:
-    """MRT配置"""
+    """One render config: voxel index, rotation index, visual/video/output."""
     group_id: int
     instance_id: int
-    voxel_index: int  # s0, s1, s2, s3
+    voxel_index: int   # s0, s1, s2, s3
     rotation_index: int  # r0, r1, r2, r3
     voxel_data: List[int]
     visual_config: Dict[str, Any]
     rotation_config: Dict[str, Any]
     video_config: Dict[str, Any]
     output_config: Dict[str, Any]
-    difficulty: str  # Easy 或 Hard
+    difficulty: str  # "Easy" or "Hard"
+
 
 # ==================== MRT Generator ====================
 
 class MRTGenerator:
-    """MRT生成器 - 从chiral JSON读取voxel数据并生成配置"""
-    
+    """Builds instances and per-config JSON from chiral voxel JSON."""
+
     def __init__(self, chiral_json_path: str):
         self.chiral_json_path = chiral_json_path
         self.chiral_data = None
         self.voxel_groups = []
         self.instances = []
         self.configs = []
-        
+
     def load_chiral_data(self):
-        """加载chiral JSON数据"""
+        """Load chiral JSON (list of shapes with variants)."""
         with open(self.chiral_json_path, 'r', encoding='utf-8') as f:
             self.chiral_data = json.load(f)
-        print(f"✓ 已加载chiral数据: {len(self.chiral_data)} 个形状")
-        
+        print(f"Loaded chiral data: {len(self.chiral_data)} shapes")
+
     def extract_voxel_groups(self):
-        """从chiral数据中提取voxel组，每组4个voxel (s0, s1, s2, s3)"""
+        """Extract voxel groups from chiral data; each group has 4 voxels (s0, s1, s2, s3)."""
         if not self.chiral_data:
-            raise ValueError("请先加载chiral数据")
-            
-        # 新格式：直接是数组，每个元素包含shape_id, voxel_count, variants
+            raise ValueError("Load chiral data first (call load_chiral_data)")
         shapes = self.chiral_data
         group_id = 0
         
@@ -108,66 +116,52 @@ class MRTGenerator:
         for shape in shapes:
             variants = shape['variants']
             
-            # s0: original 的整结构（坐标列表）
+            # s0: original full structure (coordinate list)
             s0 = variants['original']['voxels']
-            
-            # s1: 从3个mirror中随机选择一个
+            # s1: pick one of three mirror variants at random
             mirror_variants = ['xoy_mirror', 'xoz_mirror', 'yoz_mirror']
             available_mirrors = [v for v in mirror_variants if v in variants]
             if available_mirrors:
                 selected_mirror_s1 = random.choice(available_mirrors)
                 s1 = variants[selected_mirror_s1]['voxels']
             else:
-                # 如果没有镜像变体，使用original作为fallback
                 s1 = s0.copy()
                 selected_mirror_s1 = None
-            
-            # s2: 从除了s1的两个mirror中随机选择一个
+            # s2: pick one of the remaining two mirrors
             remaining_mirrors = [v for v in available_mirrors if v != selected_mirror_s1]
             if remaining_mirrors:
                 selected_mirror_s2 = random.choice(remaining_mirrors)
                 s2 = variants[selected_mirror_s2]['voxels']
             else:
-                # 如果没有剩余的镜像变体，使用original作为fallback
                 s2 = s0.copy()
-            
-            # s3: 从remove/move变体中随机选择一个
+            # s3: pick one of remove/move variants
             modify_variants = ['remove', 'move']
             available_modifies = [v for v in modify_variants if v in variants]
             if available_modifies:
                 selected_modify = random.choice(available_modifies)
                 s3 = variants[selected_modify]['voxels']
             else:
-                # 如果没有修改变体，使用original作为fallback
                 s3 = s0.copy()
 
             group_voxels = [s0, s1, s2, s3]
             voxel_group = VoxelGroup(
                 group_id=group_id,
                 voxels=group_voxels,
-                voxel_count=4  # 现在有4个voxel组
+                voxel_count=4
             )
             self.voxel_groups.append(voxel_group)
             group_id += 1
-                
-        print(f"✓ 已提取 {len(self.voxel_groups)} 个voxel组")
-        
+
+        print(f"Extracted {len(self.voxel_groups)} voxel groups")
+
     def generate_instances(self, easy_instances_per_group: int = 1, hard_instances_per_group: int = 1):
-        """为每个voxel组生成指定数量的easy和hard实例"""
+        """Generate easy and hard instances per voxel group."""
         for group in self.voxel_groups:
             instance_id = 0
-            
-            # 生成Easy实例
             for _ in range(easy_instances_per_group):
-                # 重新采样s1和s2
                 new_group = self._resample_voxel_group(group)
-                
-                # 生成visual配置（每个instance固定）
                 visual_config = self._generate_visual_config()
-                
-                # Easy: 1个rotation配置
                 rotation_configs = [self._generate_rotation_config()]
-                
                 instance = Instance(
                     instance_id=instance_id,
                     difficulty="Easy",
@@ -177,18 +171,10 @@ class MRTGenerator:
                 )
                 self.instances.append(instance)
                 instance_id += 1
-            
-            # 生成Hard实例
             for _ in range(hard_instances_per_group):
-                # 重新采样s1和s2
                 new_group = self._resample_voxel_group(group)
-                
-                # 生成visual配置（每个instance固定）
                 visual_config = self._generate_visual_config()
-                
-                # Hard: 4个rotation配置 (r0, r1, r2, r3)
                 rotation_configs = [self._generate_rotation_config() for _ in range(4)]
-                
                 instance = Instance(
                     instance_id=instance_id,
                     difficulty="Hard",
@@ -198,21 +184,14 @@ class MRTGenerator:
                 )
                 self.instances.append(instance)
                 instance_id += 1
-                
-        print(f"✓ 已生成 {len(self.instances)} 个实例")
-        print(f"  - Easy实例: {easy_instances_per_group * len(self.voxel_groups)} 个")
-        print(f"  - Hard实例: {hard_instances_per_group * len(self.voxel_groups)} 个")
-    
+        print(f"Generated {len(self.instances)} instances")
+        print(f"  Easy: {easy_instances_per_group * len(self.voxel_groups)}, Hard: {hard_instances_per_group * len(self.voxel_groups)}")
+
     def _resample_voxel_group(self, original_group):
-        """为给定组重新采样s1、s2和s3，保持s0不变"""
-        # 获取对应的原始形状数据
+        """Resample s1, s2, s3 for the group; keep s0 unchanged."""
         shape = self.chiral_data[original_group.group_id]
         variants = shape['variants']
-        
-        # s0保持不变
         s0 = original_group.voxels[0]
-        
-        # 重新采样s1: 从3个mirror中随机选择一个
         mirror_variants = ['xoy_mirror', 'xoz_mirror', 'yoz_mirror']
         available_mirrors = [v for v in mirror_variants if v in variants]
         if available_mirrors:
@@ -221,16 +200,12 @@ class MRTGenerator:
         else:
             s1 = s0.copy()
             selected_mirror_s1 = None
-        
-        # 重新采样s2: 从除了s1的两个mirror中随机选择一个
         remaining_mirrors = [v for v in available_mirrors if v != selected_mirror_s1]
         if remaining_mirrors:
             selected_mirror_s2 = random.choice(remaining_mirrors)
             s2 = variants[selected_mirror_s2]['voxels']
         else:
             s2 = s0.copy()
-        
-        # 重新采样s3: 从remove/move变体中随机选择一个
         modify_variants = ['remove', 'move']
         available_modifies = [v for v in modify_variants if v in variants]
         if available_modifies:
@@ -238,8 +213,6 @@ class MRTGenerator:
             s3 = variants[selected_modify]['voxels']
         else:
             s3 = s0.copy()
-        
-        # 创建新的voxel组
         new_group = VoxelGroup(
             group_id=original_group.group_id,
             voxels=[s0, s1, s2, s3],
@@ -249,7 +222,7 @@ class MRTGenerator:
         return new_group
         
     def generate_configs(self):
-        """生成所有MRT配置"""
+        """Build all MRT configs (one per voxel/rotation combination)."""
         for instance in self.instances:
             group_id = instance.voxel_group.group_id
             instance_id = instance.instance_id
@@ -257,12 +230,8 @@ class MRTGenerator:
             voxels = instance.voxel_group.voxels
             visual_config = instance.visual_config
             rotation_configs = instance.rotation_configs
-            
-            # 生成video配置（每个instance固定）
             video_config = self._generate_video_config()
-            
             if difficulty == "Easy":
-                # Easy: 所有voxel + 1个rotation
                 rotation_config = rotation_configs[0]
                 for voxel_idx, voxel_data in enumerate(voxels):
                     config = MRTConfig(
@@ -279,8 +248,7 @@ class MRTGenerator:
                     )
                     self.configs.append(config)
                     
-            else:  # Hard
-                # Hard: (0,0)(1,1)(2,2)(3,3)(0,1)(0,2)(0,3)
+            else:  # Hard: (s0,r0)(s1,r1)(s2,r2)(s3,r3)(s0,r1)(s0,r2)(s0,r3)
                 hard_combinations = [
                     (0, 0),  # s0r0
                     (1, 1),  # s1r1
@@ -306,11 +274,10 @@ class MRTGenerator:
                             difficulty=difficulty
                         )
                         self.configs.append(config)
-                        
-        print(f"✓ 已生成 {len(self.configs)} 个MRT配置")
-        
+        print(f"Generated {len(self.configs)} MRT configs")
+
     def _generate_visual_config(self) -> Dict[str, Any]:
-        """生成visual配置（标准字段，匹配 CubeVisualConfig）"""
+        """Return visual config dict (fields match CubeVisualConfig)."""
         return {
             "cube_size": round(random.uniform(*CUBE_SIZE_RANGE), 2),
             "spacing": round(random.uniform(*SPACING_RANGE), 2),
@@ -322,20 +289,12 @@ class MRTGenerator:
         }
         
     def _generate_rotation_config(self) -> Dict[str, Any]:
-        """生成rotation配置"""
-        # 先随机选择旋转模式
+        """Return rotation config: axis or random unit vector, angle, speed, center mode."""
         rotation_mode = random.choice(["axis", "random"])
-        
         if rotation_mode == "axis":
-            # axis模式：从xyz轴单位向量中随机选择
-            axis_vectors = [
-                [1, 0, 0],  # x轴
-                [0, 1, 0],  # y轴
-                [0, 0, 1]   # z轴
-            ]
+            axis_vectors = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
             rotation_vector = random.choice(axis_vectors)
         else:
-            # random模式：生成随机单位旋转向量
             rotation_vector = np.random.randn(3)
             rotation_vector = rotation_vector / np.linalg.norm(rotation_vector)
             rotation_vector = list(rotation_vector)
@@ -351,10 +310,8 @@ class MRTGenerator:
         }
         
     def _generate_video_config(self) -> Dict[str, Any]:
-        """生成video配置（可视化元素由白名单固定控制）"""
+        """Return video config; visual elements controlled by VISUAL_ELEMENTS_WHITELIST."""
         whitelist = set(VISUAL_ELEMENTS_WHITELIST)
-        
-        # 从4个离散的theta范围中随机选择一个，然后在该范围内随机采样
         selected_range = random.choice(THETA_RANGES)
         theta = random.randint(*selected_range)
         
@@ -376,24 +333,15 @@ class MRTGenerator:
         }
         
     def _generate_output_config(self, group_id: int, instance_id: int, voxel_idx: int, rotation_idx: int, difficulty: str) -> Dict[str, Any]:
-        """生成output配置"""
-        # 生成全局ID（基于实例在各自难度类型中的位置）
-        # 对于Easy实例：global_id = 当前Easy实例在Easy实例中的序号 + 1
-        # 对于Hard实例：global_id = 当前Hard实例在Hard实例中的序号 + 1
-        
-        # 计算当前实例在各自难度类型中的序号
+        """Return output config; filename uses global index within difficulty (e001, h001, ...)."""
         if difficulty == "Easy":
-            # 计算当前Easy实例是第几个Easy实例
             easy_instances = [i for i in self.instances if i.difficulty == "Easy"]
             current_easy_index = next(i for i, inst in enumerate(easy_instances) if inst.voxel_group.group_id == group_id and inst.instance_id == instance_id)
             global_id = current_easy_index + 1
-        else:  # Hard
-            # 计算当前Hard实例是第几个Hard实例
+        else:
             hard_instances = [i for i in self.instances if i.difficulty == "Hard"]
             current_hard_index = next(i for i, inst in enumerate(hard_instances) if inst.voxel_group.group_id == group_id and inst.instance_id == instance_id)
             global_id = current_hard_index + 1
-        
-        # 根据难度选择前缀
         prefix = "e" if difficulty == "Easy" else "h"
         
         return {
@@ -411,78 +359,69 @@ class MRTGenerator:
         }
         
     def save_configs(self, timestamp: str = None) -> Tuple[str, List[str]]:
-        """保存所有配置文件"""
+        """Write all config JSONs and batch meta to medias/batch_<timestamp>/shape/."""
         if timestamp is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # 基于3dr目录的相对路径
+        # batch under project root (3dr/medias/), 2dr-style: shape (meta), img (task), video (guidance)
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        batch_dir = os.path.join(script_dir, "medias", f"batch_{timestamp}")
+        project_root = os.path.dirname(script_dir)
+        batch_dir = os.path.join(project_root, "medias", f"batch_{timestamp}")
         os.makedirs(batch_dir, exist_ok=True)
-        
-        # 创建子目录
-        os.makedirs(os.path.join(batch_dir, "videos"), exist_ok=True)
-        os.makedirs(os.path.join(batch_dir, "images"), exist_ok=True)
-        os.makedirs(os.path.join(batch_dir, "Tex"), exist_ok=True)
-        os.makedirs(os.path.join(batch_dir, "meta"), exist_ok=True)
-        
+        shape_dir = os.path.join(batch_dir, "shape")
+        img_dir = os.path.join(batch_dir, "images")
+        video_dir = os.path.join(batch_dir, "video")
+        tex_dir = os.path.join(shape_dir, "tex")
+        os.makedirs(shape_dir, exist_ok=True)
+        os.makedirs(img_dir, exist_ok=True)
+        os.makedirs(video_dir, exist_ok=True)
+
+        batch_dir_abs = os.path.abspath(batch_dir)
+        shape_dir_abs = os.path.abspath(shape_dir)
+        tex_dir_abs = os.path.abspath(tex_dir)
+        image_dir_abs = os.path.abspath(img_dir)
+        video_dir_abs = os.path.abspath(video_dir)
+
         config_files = []
         meta_records = []
-        
+
         for idx, config in enumerate(self.configs, 1):
-            # 生成配置文件名 - 使用与_generate_output_config相同的全局ID逻辑
             prefix = "e" if config.difficulty == "Easy" else "h"
-            
-            # 计算全局ID（与_generate_output_config中的逻辑一致）
             if config.difficulty == "Easy":
-                # 计算当前Easy实例是第几个Easy实例
                 easy_instances = [i for i in self.instances if i.difficulty == "Easy"]
                 current_easy_index = next(i for i, inst in enumerate(easy_instances) if inst.voxel_group.group_id == config.group_id and inst.instance_id == config.instance_id)
                 global_id = current_easy_index + 1
-            else:  # Hard
-                # 计算当前Hard实例是第几个Hard实例
+            else:
                 hard_instances = [i for i in self.instances if i.difficulty == "Hard"]
                 current_hard_index = next(i for i, inst in enumerate(hard_instances) if inst.voxel_group.group_id == config.group_id and inst.instance_id == config.instance_id)
                 global_id = current_hard_index + 1
-            
-            filename = f"mrt_{prefix}{global_id:03d}_{config.group_id}_{config.instance_id}_s{config.voxel_index}_r{config.rotation_index}.json"
-            filepath = os.path.join(batch_dir, filename)
-            
-            # 绝对路径输出到当前批次目录
-            batch_dir_abs = os.path.abspath(batch_dir)
-            media_dir_abs = batch_dir_abs
-            video_dir_abs = os.path.join(batch_dir_abs, "videos")
-            image_dir_abs = os.path.join(batch_dir_abs, "images")
-            tex_dir_abs = os.path.join(batch_dir_abs, "Tex")
-            meta_dir_abs = os.path.join(batch_dir_abs, "meta")
 
-            # 转换为字典格式
+            filename = f"mrt_{prefix}{global_id:03d}_{config.group_id}_{config.instance_id}_s{config.voxel_index}_r{config.rotation_index}.json"
+            filepath = os.path.join(shape_dir, filename)
+
             config_dict = {
                 "voxel": {
                     "type": "coordinates",
                     "data": config.voxel_data,
-                    "grid_size": [4] * 3,  # 固定为4x4x4网格
+                    "grid_size": [4] * 3,
                     "visual": config.visual_config
                 },
                 "rotation": config.rotation_config,
                 "video": config.video_config,
                 "output": {
                     **config.output_config,
-                    "media_dir": media_dir_abs,
+                    "media_dir": batch_dir_abs,
                     "video_dir": video_dir_abs,
                     "image_dir": image_dir_abs,
                     "tex_dir": tex_dir_abs,
-                    "meta_dir": meta_dir_abs,
+                    "meta_dir": shape_dir_abs,
                 }
             }
-            
-            # 保存配置文件
+
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(config_dict, f, indent=2, ensure_ascii=False)
-            
+
             config_files.append(filepath)
-            
-            # 记录元数据
             meta_record = {
                 "config_id": idx,
                 "config_file": filename,
@@ -503,8 +442,7 @@ class MRTGenerator:
             }
             meta_records.append(meta_record)
         
-        # 保存批量 meta 文件到 batch 目录下的 meta 文件夹
-        meta_path = os.path.join(batch_dir, "meta", f"meta_mrt_{timestamp}.json")
+        meta_path = os.path.join(shape_dir, f"meta_mrt_{timestamp}.json")
         
         batch_meta = {
             "timestamp": timestamp,
@@ -516,73 +454,56 @@ class MRTGenerator:
         
         with open(meta_path, 'w', encoding='utf-8') as f:
             json.dump(batch_meta, f, indent=2, ensure_ascii=False)
-        
-        print(f"✓ MRT配置已保存到: {batch_dir}")
-        print(f"✓ Meta 文件已保存到: {meta_path}")
-        print(f"  总计: {len(config_files)} 个配置文件")
-        print(f"  Groups: {len(self.voxel_groups)}, Instances: {len(self.instances)}")
-        
+        print(f"MRT configs saved to: {batch_dir}")
+        print(f"Meta file: {meta_path}")
+        print(f"  Total configs: {len(config_files)}, Groups: {len(self.voxel_groups)}, Instances: {len(self.instances)}")
         return batch_dir, config_files
 
-# ==================== 批量渲染器 ====================
+
+# ==================== Batch renderer ====================
 
 class MRTBatchRenderer:
-    """MRT批量渲染器"""
-    
+    """Renders all MRT config JSONs in a shape directory to videos."""
+
     def __init__(self, config_dir: str):
         self.config_dir = config_dir
         self.results = []
-    
+
     def render_all(self, parallel: bool = False):
-        """渲染所有配置"""
+        """Render all mrt_*.json configs in config_dir."""
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         from cube_stack_animation import create_video_from_config
-        
-        # 获取所有配置文件
         config_files = sorted(Path(self.config_dir).glob("mrt_*.json"))
-        
-        print(f"\n开始批量渲染 {len(config_files)} 个MRT配置...")
-        
+        print(f"\nRendering {len(config_files)} MRT configs...")
         for idx, config_file in enumerate(config_files, 1):
-            print(f"\n[{idx}/{len(config_files)}] 渲染: {config_file.name}")
+            print(f"[{idx}/{len(config_files)}] {config_file.name}")
             try:
                 result = create_video_from_config(str(config_file))
-                self.results.append({
-                    "config": str(config_file),
-                    "output": result,
-                    "status": "success"
-                })
-                print(f"  ✓ 完成: {result}")
+                self.results.append({"config": str(config_file), "output": result, "status": "success"})
+                print(f"  Done: {result}")
             except Exception as e:
-                print(f"  ✗ 失败: {e}")
-                self.results.append({
-                    "config": str(config_file),
-                    "error": str(e),
-                    "status": "failed"
-                })
-        
-        # 统计结果
+                print(f"  Failed: {e}")
+                self.results.append({"config": str(config_file), "error": str(e), "status": "failed"})
         success_count = sum(1 for r in self.results if r["status"] == "success")
-        print(f"\n批量渲染完成:")
-        print(f"  成功: {success_count}/{len(config_files)}")
-        print(f"  失败: {len(config_files) - success_count}/{len(config_files)}")
+        print(f"\nBatch done: success {success_count}/{len(config_files)}, failed {len(config_files) - success_count}/{len(config_files)}")
 
-# ==================== 主函数 ====================
 
-def create_mrt_configs(chiral_json_path: str, 
+# ==================== Main API ====================
+
+def create_mrt_configs(chiral_json_path: str,
                       easy_instances_per_group: int = 1,
                       hard_instances_per_group: int = 1) -> Tuple[str, List[str]]:
     """
-    创建MRT配置文件
-    
+    Create MRT configs from chiral JSON and save to medias/batch_<timestamp>/shape/.
+
     Args:
-        chiral_json_path: chiral JSON文件路径
-        easy_instances_per_group: 每组生成的Easy实例数量
-        hard_instances_per_group: 每组生成的Hard实例数量
-        
+        chiral_json_path: Path to chiral voxel variants JSON.
+        easy_instances_per_group: Number of Easy instances per voxel group.
+        hard_instances_per_group: Number of Hard instances per voxel group.
+
     Returns:
-        (batch_dir, config_files)
+        (batch_dir, list of config file paths).
     """
     generator = MRTGenerator(chiral_json_path)
     
@@ -598,45 +519,22 @@ def create_mrt_configs(chiral_json_path: str,
     return batch_dir, config_files
 
 def render_mrt_batch(batch_dir: str):
-    """渲染MRT批量配置"""
+    """Render all MRT configs in batch_dir (expects shape/ with mrt_*.json)."""
     renderer = MRTBatchRenderer(batch_dir)
     renderer.render_all()
     return renderer.results
 
-# ==================== 使用示例 ====================
 
 if __name__ == "__main__":
-    print("=" * 80)
-    print("MRT Generator - 从Chiral JSON生成配置")
-    print("=" * 80)
-    
-    # 设置路径 - 基于3dr目录的相对路径
+    print("MRT Generator — build configs from chiral JSON")
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    chiral_json_path = os.path.join(script_dir, "chiral_voxels_variants.json")
-    
-    print(f"\n【示例】从chiral JSON生成MRT配置")
+    project_root = os.path.dirname(script_dir)
+    chiral_json_path = os.path.join(project_root, "chiral_voxels_variants.json")
     print(f"Chiral JSON: {chiral_json_path}")
-    print(f"输出目录: {os.path.join(script_dir, 'medias', 'batch_<timestamp>')}")
-    
-    # 生成配置
+    print(f"Output: {os.path.join(project_root, 'medias', 'batch_<timestamp>')}")
     batch_dir, config_files = create_mrt_configs(
         chiral_json_path=chiral_json_path,
-        easy_instances_per_group=EASY_INSTANCE_NUM, 
-        hard_instances_per_group=HARD_INSTANCE_NUM  
+        easy_instances_per_group=EASY_INSTANCE_NUM,
+        hard_instances_per_group=HARD_INSTANCE_NUM
     )
-    
-    print(f"\n✓ 配置文件已生成在: {batch_dir}")
-    print(f"  共 {len(config_files)} 个配置文件")
-    
-    # 可选：渲染所有配置
-    # print("\n开始批量渲染...")
-    # results = render_mrt_batch(batch_dir)
-    
-    # print("\n" + "=" * 80)
-    # print("✓ MRT配置生成完成")
-    # print("=" * 80)
-    # print("\n生成规则：")
-    # print("  - Easy实例: 所有voxel(s0,s1,s2,s3) + 1个rotation(r0)")
-    # print("  - Hard实例: s0r1, s0r2, s1r2, s2r3")
-    # print("  - 命名格式: group_id_instance_id_sx_rx.mp4")
-    # print("=" * 80)
+    print(f"Configs written to: {batch_dir} ({len(config_files)} files)")

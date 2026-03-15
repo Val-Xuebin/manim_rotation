@@ -63,7 +63,7 @@ EASY_REASONS = {
 # }
 
 HARD_REASONS = {
-    'answer': '<visuak>\nAfter visually rotating the original cube, it matches the cubestack structure in the choice B',
+    'answer': '<visual>\nAfter visually rotating the original cube, it matches the cubestack structure in the choice B',
     'mirror1': '<visual>\nAfter visually rotating the original, the cubestack of this option is mirror-symmetric to the original and cannot be obtained by rotating the original cubestack',
     'mirror2': '<visual>\n the cubestack is mirror-symmetric to the original under my imagination rotation and cannot be obtained by rotating the original cubestack',
     'move': {
@@ -292,92 +292,106 @@ def get_video_duration(video_path: Path) -> float:
     return 2.0  # Default duration
 
 
-def detect_modify_type(instance_dir: Path) -> str:
-    """
-    Detect whether the modify variant is 'move' or 'remove' based on file existence.
-    
-    Args:
-        instance_dir: Path to instance directory
-    
-    Returns:
-        'move' or 'remove'
-    """
-    task_dir = instance_dir / 'task'
-    if (task_dir / f'{instance_dir.name}_move.jpg').exists():
-        return 'move'
-    elif (task_dir / f'{instance_dir.name}_remove.jpg').exists():
-        return 'remove'
-    else:
-        return 'modify'  # fallback
+def _task_dir(instance_dir: Path) -> Path:
+    """Task dir: instance_dir/task (legacy) or instance_dir (nested img/<id>)."""
+    if (instance_dir / "task").is_dir():
+        return instance_dir / "task"
+    return instance_dir
 
 
-def generate_task_data(instance_dir: Path) -> Optional[TaskData]:
+def detect_modify_type(instance_dir: Path = None, batch_dir: Path = None, instance_id: str = None) -> str:
+    """Detect move/remove by file existence. Use (batch_dir, instance_id) for flat layout."""
+    if instance_id and batch_dir:
+        img_dir = batch_dir / "images"
+        if (img_dir / f"{instance_id}_move.jpg").exists():
+            return "move"
+        if (img_dir / f"{instance_id}_remove.jpg").exists():
+            return "remove"
+        return "modify"
+    if instance_dir:
+        task_dir = _task_dir(instance_dir)
+        if (task_dir / f"{instance_dir.name}_move.jpg").exists():
+            return "move"
+        if (task_dir / f"{instance_dir.name}_remove.jpg").exists():
+            return "remove"
+    return "modify"
+
+
+def generate_task_data(
+    instance_dir: Path = None,
+    batch_dir: Path = None,
+    instance_id: str = None,
+) -> Optional[TaskData]:
     """
-    Generate task data for a single instance.
-    
-    Args:
-        instance_dir: Path to instance directory
-    
-    Returns:
-        TaskData object or None if instance is invalid
+    Generate task data. Flat (2dr-style): pass batch_dir + instance_id. Legacy: pass instance_dir.
     """
-    instance_id = instance_dir.name
-    
-    # Determine category
-    if instance_id.startswith('mrt_e'):
-        category = 'easy'
-    elif instance_id.startswith('mrt_h'):
-        category = 'hard'
+    if instance_id and batch_dir:
+        pass
+    elif instance_dir:
+        instance_id = instance_dir.name
+        batch_dir = instance_dir.parent.parent if (instance_dir.parent.name == "images") else instance_dir.parent
     else:
         return None
-    
-    # Detect modify type
-    modify_type = detect_modify_type(instance_dir)
-    
-    # Generate assignment
+
+    if instance_id.startswith("mrt_e"):
+        category = "easy"
+    elif instance_id.startswith("mrt_h"):
+        category = "hard"
+    else:
+        return None
+
+    modify_type = detect_modify_type(instance_dir=instance_dir, batch_dir=batch_dir, instance_id=instance_id)
+
     assign = generate_assign_choices(category, modify_type)
-    
-    # Generate question
     text_input = QUESTION_TEMPLATE
-    
-    # Get image order (including original image as first element)
     option_images = get_image_order(assign, instance_id)
-    image_filenames = [f'{instance_id}_question.jpg'] + option_images
-    
-    # Build visual_input as list of objects
-    visual_input = []
-    for img_filename in image_filenames:
-        img_path = f"{PATH_PREFIX}/{instance_id}/task/{img_filename}"
-        visual_input.append({
-            "type": "image",
-            "path": img_path
-        })
-    
-    # Get guidance video filenames
-    guidance_filenames = get_guidance_order(assign, instance_id, category, modify_type)
-    
-    # Build visual_output as list of objects
-    visual_output = []
-    for guidance_filename in guidance_filenames:
-        if guidance_filename == '<no_guidance>':
-            continue  # Skip no_guidance entries
-        video_path_obj = instance_dir / 'guidance' / guidance_filename
-        video_duration = get_video_duration(video_path_obj) if video_path_obj.exists() else 2.0
-        video_path = f"{PATH_PREFIX}/{instance_id}/guidance/{guidance_filename}"
-        visual_output.append({
-            "type": "video",
-            "path": video_path,
-            "fps": DEFAULT_FPS,
-            "video_start": DEFAULT_VIDEO_START,
-            "video_end": video_duration
-        })
-    
-    # For reasoning generation, use the full guidance_filenames list (including '<no_guidance>')
-    # to maintain correct index mapping (A=0, B=1, C=2, D=3)
-    # Determine answer and reasoning
+    image_filenames = [f"{instance_id}_question.jpg"] + option_images
+
+    img_dir = batch_dir / "images"
+    video_dir = batch_dir / "video"
+    flat = instance_dir is None
+    if flat:
+        visual_input = [{"type": "image", "path": f"{PATH_PREFIX}/images/{fn}"} for fn in image_filenames]
+        guidance_filenames = get_guidance_order(assign, instance_id, category, modify_type)
+        visual_output = []
+        for guidance_filename in guidance_filenames:
+            if guidance_filename == "<no_guidance>":
+                continue
+            video_path_obj = video_dir / guidance_filename
+            video_duration = get_video_duration(video_path_obj) if video_path_obj.exists() else 2.0
+            visual_output.append({
+                "type": "video",
+                "path": f"{PATH_PREFIX}/video/{guidance_filename}",
+                "fps": DEFAULT_FPS,
+                "video_start": DEFAULT_VIDEO_START,
+                "video_end": video_duration,
+            })
+    else:
+        guidance_dir = batch_dir / "video" / instance_id if (batch_dir / "video" / instance_id).is_dir() else (instance_dir / "guidance")
+        nested = (batch_dir / "video" / instance_id).is_dir()
+        visual_input = []
+        for img_filename in image_filenames:
+            path = f"{PATH_PREFIX}/images/{instance_id}/{img_filename}" if nested else f"{PATH_PREFIX}/{instance_id}/task/{img_filename}"
+            visual_input.append({"type": "image", "path": path})
+        guidance_filenames = get_guidance_order(assign, instance_id, category, modify_type)
+        visual_output = []
+        for guidance_filename in guidance_filenames:
+            if guidance_filename == "<no_guidance>":
+                continue
+            video_path_obj = guidance_dir / guidance_filename
+            video_duration = get_video_duration(video_path_obj) if video_path_obj.exists() else 2.0
+            path = f"{PATH_PREFIX}/video/{instance_id}/{guidance_filename}" if nested else f"{PATH_PREFIX}/{instance_id}/guidance/{guidance_filename}"
+            visual_output.append({
+                "type": "video",
+                "path": path,
+                "fps": DEFAULT_FPS,
+                "video_start": DEFAULT_VIDEO_START,
+                "video_end": video_duration,
+            })
+
     answer = determine_answer(assign)
     text_output = generate_reasoning(answer, category, assign, guidance_filenames)
-    
+
     return TaskData(
         category=category,
         id=instance_id,
@@ -386,7 +400,7 @@ def generate_task_data(instance_dir: Path) -> Optional[TaskData]:
         visual_input=visual_input,
         visual_output=visual_output,
         answer=answer,
-        text_output=text_output
+        text_output=text_output,
     )
 
 
@@ -403,23 +417,40 @@ def generate_all_task_data(batch_dir: Path, output_file: Path, limit_easy: int =
     instances = []
     easy_count = 0
     hard_count = 0
-    
-    # Find all instance directories
-    for item in batch_dir.iterdir():
-        if item.is_dir() and (item.name.startswith('mrt_e') or item.name.startswith('mrt_h')):
-            # Check limits
-            if item.name.startswith('mrt_e'):
+
+    shape_dir = batch_dir / "shape"
+    if shape_dir.is_dir():
+        import re
+        configs = list(shape_dir.glob("mrt_*.json"))
+        instance_ids = sorted(set(m.group(1) for p in configs for m in [re.match(r"^(mrt_[eh]\d{3})_", p.name)] if m))
+        for inst_id in instance_ids:
+            if inst_id.startswith("mrt_e"):
                 if limit_easy is not None and easy_count >= limit_easy:
                     continue
                 easy_count += 1
-            elif item.name.startswith('mrt_h'):
+            else:
                 if limit_hard is not None and hard_count >= limit_hard:
                     continue
                 hard_count += 1
-            
-            task_data = generate_task_data(item)
+            task_data = generate_task_data(batch_dir=batch_dir, instance_id=inst_id)
             if task_data:
                 instances.append(task_data)
+    else:
+        img_dir = batch_dir / "images"
+        iter_dir = img_dir if img_dir.is_dir() else batch_dir
+        for item in sorted(iter_dir.iterdir(), key=lambda x: x.name):
+            if item.is_dir() and (item.name.startswith("mrt_e") or item.name.startswith("mrt_h")):
+                if item.name.startswith("mrt_e"):
+                    if limit_easy is not None and easy_count >= limit_easy:
+                        continue
+                    easy_count += 1
+                else:
+                    if limit_hard is not None and hard_count >= limit_hard:
+                        continue
+                    hard_count += 1
+                task_data = generate_task_data(instance_dir=item)
+                if task_data:
+                    instances.append(task_data)
     
     # Sort instances by ID
     instances.sort(key=lambda x: x.id)

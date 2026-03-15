@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """
-Voxel空间管理类
-用于管理3D网格中的方块堆叠和旋转
+Voxel space and data types for 3D cube stacks.
 
-职责：
-1. 统一的 Voxel 输入接口（文件输入、直接输入）
-2. 视觉元素配置（方块大小、框线、样式等）
-3. 输出接口（Manim Animation 可直接使用的格式）
+Provides: unified voxel input (coordinates, array, file, colored), visual config
+(cube size, stroke, style), and output suitable for Manim (VoxelSpace -> cubes).
 """
 
 from __future__ import annotations
@@ -18,33 +15,19 @@ import json
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
-# ==================== 1. 统一 Voxel 输入接口 ====================
+# ==================== Voxel data ====================
 
 @dataclass
 class VoxelData:
-    """
-    统一的 Voxel 数据格式
-    
-    支持多种输入方式：
-    1. 坐标列表：[(x,y,z), ...]
-    2. 3D数组：[[[1,0,1], ...], ...]
-    3. 文件路径："path/to/voxel.json"
-    4. 带颜色的坐标：[{"pos": [x,y,z], "color": "BLUE"}, ...]
-    """
+    """Unified voxel format: coordinates, grid_size, optional per-cube colors."""
     coordinates: List[Tuple[int, int, int]] = field(default_factory=list)
     grid_size: Tuple[int, int, int] = (10, 10, 10)
-    colors: Dict[Tuple[int, int, int], str] = field(default_factory=dict)  # 每个方块的颜色
-    
+    colors: Dict[Tuple[int, int, int], str] = field(default_factory=dict)
+
     @classmethod
-    def from_coordinates(cls, coords: Union[List[Tuple[int, int, int]], List[Dict[str, Any]]], 
+    def from_coordinates(cls, coords: Union[List[Tuple[int, int, int]], List[Dict[str, Any]]],
                         grid_size: Tuple[int, int, int] = (10, 10, 10)) -> 'VoxelData':
-        """
-        从坐标列表创建
-        
-        支持两种格式：
-        1. 简单坐标：[(0,0,0), (1,1,1), ...]
-        2. 带颜色：[{"pos": [0,0,0], "color": "BLUE"}, {"pos": [1,1,1], "color": "RED"}, ...]
-        """
+        """Build from coordinate list: [(x,y,z), ...] or [{"pos": [x,y,z], "color": "BLUE"}, ...]."""
         coordinates = []
         colors = {}
         
@@ -62,9 +45,9 @@ class VoxelData:
         return cls(coordinates=coordinates, grid_size=grid_size, colors=colors)
     
     @classmethod
-    def from_array(cls, array: List[List[List[int]]], 
+    def from_array(cls, array: List[List[List[int]]],
                    grid_size: Optional[Tuple[int, int, int]] = None) -> 'VoxelData':
-        """从3D数组创建"""
+        """Build from 3D array; non-zero cells become coordinates."""
         coords = []
         for x, layer in enumerate(array):
             for y, row in enumerate(layer):

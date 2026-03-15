@@ -56,23 +56,14 @@ class StdSwap:
 
 def _import_renderer():
     here = Path(__file__).resolve()
-    candidates = [
-        here.parent.parent,   # MRT root
-        here.parent,          # task_compose/
-        Path.cwd(),
-    ]
-    tried = []
-    for base in candidates:
-        tried.append(str(base))
-        if (base / "renderer.py").exists():
-            if str(base) not in sys.path:
-                sys.path.insert(0, str(base))
-            try:
-                from renderer import render_video, extract_frame  # type: ignore
-                return render_video, extract_frame
-            except Exception:
-                continue
-    print("[FATAL] cannot import renderer.py. tried:", ", ".join(tried), file=sys.stderr)
+    project_root = here.parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    try:
+        from src.renderer import render_video, extract_frame
+        return render_video, extract_frame
+    except Exception as e:
+        print("[FATAL] cannot import src.renderer:", e, file=sys.stderr)
     return None, None
 
 
@@ -80,12 +71,12 @@ RENDER_VIDEO, EXTRACT_FRAME = _import_renderer()
 if RENDER_VIDEO is None or EXTRACT_FRAME is None:
     sys.exit(1)
 
-# manim不可并行
+# Manim is not thread-safe; use a global lock when rendering
 RENDER_LOCK = Lock()
 
 
 # ============================================================
-# 2. basic utils
+# Basic utils: parse mrt_*.json filenames, load entries
 # ============================================================
 
 JSON_NAME_RE = re.compile(r"^(mrt_[eh])(\d{3})_(\d+)_([0-9]+)_s([0-3])_r([0-3])\.json$")
@@ -175,21 +166,18 @@ def ensure_instance_dirs(instance_root: Path) -> Dict[str, Path]:
 # ============================================================
 
 def compose(batch_dir: Path) -> None:
-    entries = load_json_entries_from_root(batch_dir)
+    """Configs live in batch_dir/shape/; ensure img/ and video/ exist (flat, 2dr-style)."""
+    shape_dir = batch_dir / "shape"
+    if not shape_dir.is_dir():
+        shape_dir = batch_dir
+    entries = load_json_entries_from_root(shape_dir)
     grouped: Dict[str, List[JsonEntry]] = {}
     for e in entries:
         key = f"mrt_{e.kind}{e.global_id:03d}"
         grouped.setdefault(key, []).append(e)
 
-    for inst_key, items in sorted(grouped.items()):
-        inst_dir = batch_dir / inst_key
-        dirs = ensure_instance_dirs(inst_dir)
-        meta_dir = dirs["meta"]
-        for e in items:
-            dst = meta_dir / e.path.name
-            if not dst.exists():
-                shutil.move(str(e.path), str(dst))
-
+    (batch_dir / "images").mkdir(parents=True, exist_ok=True)
+    (batch_dir / "video").mkdir(parents=True, exist_ok=True)
     print(f"[INFO] compose done: {len(grouped)} instances.")
 
 
@@ -263,6 +251,8 @@ def render_one_json(
 
 def process_instance(
     instance_dir: Path,
+    batch_dir: Path,
+    entries: List[JsonEntry],
     *,
     do_task: bool,
     do_guidance: bool,
@@ -270,10 +260,15 @@ def process_instance(
     pbar_lock: Lock,
     status_bar: tqdm,
 ) -> None:
-    instance_key = instance_dir.name
-    dirs = ensure_instance_dirs(instance_dir)
-    meta_dir, task_dir, guidance_dir = dirs["meta"], dirs["task"], dirs["guidance"]
-    entries = load_json_entries_from_dir(meta_dir)
+    instance_key = instance_dir.name if isinstance(instance_dir, Path) else instance_dir
+    if isinstance(instance_dir, Path) and (instance_dir / "task").is_dir():
+        task_dir = instance_dir / "task"
+        guidance_dir = instance_dir / "guidance"
+    else:
+        task_dir = batch_dir / "images"
+        guidance_dir = batch_dir / "video"
+        task_dir.mkdir(parents=True, exist_ok=True)
+        guidance_dir.mkdir(parents=True, exist_ok=True)
     if not entries:
         return
 
@@ -460,7 +455,8 @@ def process_instance(
 # ============================================================
 
 def run_instances_with_workers(
-    instances: List[Path],
+    batch_dir: Path,
+    instances: List,  # List[Path] (legacy) or List[str] (flat inst_key)
     *,
     do_task: bool,
     do_guidance: bool,
@@ -468,11 +464,23 @@ def run_instances_with_workers(
     limit_hard: Optional[int],
     worker_count: int,
 ) -> None:
-    # filter
-    filtered: List[Path] = []
+    shape_dir = batch_dir / "shape"
+    if not shape_dir.is_dir():
+        shape_dir = batch_dir
+    all_entries = load_json_entries_from_root(shape_dir)
+    grouped_entries: Dict[str, List[JsonEntry]] = {}
+    for e in all_entries:
+        key = f"mrt_{e.kind}{e.global_id:03d}"
+        grouped_entries.setdefault(key, []).append(e)
+
+    def _key(x) -> str:
+        return x.name if isinstance(x, Path) else x
+
+    filtered: List = []
     e_cnt = h_cnt = 0
     for d in instances:
-        if d.name.startswith("mrt_e"):
+        k = _key(d)
+        if k.startswith("mrt_e"):
             if limit_easy is not None and e_cnt >= limit_easy:
                 continue
             e_cnt += 1
@@ -482,28 +490,26 @@ def run_instances_with_workers(
             h_cnt += 1
         filtered.append(d)
 
-    # rough total
     total = 0
     for d in filtered:
-        metas = load_json_entries_from_dir(d / "meta")
-        is_easy = d.name.startswith("mrt_e")
+        metas = grouped_entries.get(_key(d), [])
+        is_easy = _key(d).startswith("mrt_e")
         by_sr = {(e.s, e.r): e for e in metas}
         _s3 = decide_s3_tag("e" if is_easy else "h", by_sr)
         if do_task and do_guidance:
             if is_easy:
                 total += 1 + 3
             else:
-                total += 4 + 3 + 0  # 4 guidance + 3 task s1~s3 (+0 because s0 used already)
+                total += 4 + 3 + 0
         elif do_guidance:
             total += 1 if is_easy else 4
-        else:  # task only
-            total += 4  # both easy/hard: 4 shots (q,a,+2 or so)
+        else:
+            total += 4
     desc = "task+guidance" if (do_task and do_guidance) else ("guidance" if do_guidance else "task")
     print(f"Start {desc}: {len(filtered)} instances, ~{total} items, workers={worker_count}")
 
     pbar = tqdm(total=total, desc=desc, unit="item", position=0)
     pbar_lock = Lock()
-
     idx_lock = Lock()
     cursor = {"i": 0}
 
@@ -515,8 +521,11 @@ def run_instances_with_workers(
                     break
                 inst_dir = filtered[cursor["i"]]
                 cursor["i"] += 1
+            entries = grouped_entries.get(_key(inst_dir), [])
             process_instance(
                 inst_dir,
+                batch_dir,
+                entries,
                 do_task=do_task,
                 do_guidance=do_guidance,
                 pbar=pbar,
@@ -555,13 +564,26 @@ def main():
     if "compose" in args.mode:
         compose(batch_dir)
 
-    all_instances = sorted(
-        d for d in batch_dir.iterdir()
-        if d.is_dir() and re.match(r"^mrt_[eh]\d{3}$", d.name)
-    )
+    shape_dir = batch_dir / "shape"
+    if shape_dir.is_dir():
+        configs = list(shape_dir.glob("mrt_*.json"))
+        all_instances = sorted(set(m.group(1) for p in configs for m in [re.match(r"^(mrt_[eh]\d{3})_", p.name)] if m))
+    else:
+        img_dir = batch_dir / "images"
+        if img_dir.is_dir():
+            all_instances = sorted(
+                d for d in img_dir.iterdir()
+                if d.is_dir() and re.match(r"^mrt_[eh]\d{3}$", d.name)
+            )
+        else:
+            all_instances = sorted(
+                d for d in batch_dir.iterdir()
+                if d.is_dir() and re.match(r"^mrt_[eh]\d{3}$", d.name)
+            )
 
     if "task" in args.mode and "guidance" in args.mode:
         run_instances_with_workers(
+            batch_dir,
             all_instances,
             do_task=True,
             do_guidance=True,
@@ -574,6 +596,7 @@ def main():
     for m in args.mode:
         if m == "guidance":
             run_instances_with_workers(
+                batch_dir,
                 all_instances,
                 do_task=False,
                 do_guidance=True,
@@ -583,6 +606,7 @@ def main():
             )
         elif m == "task":
             run_instances_with_workers(
+                batch_dir,
                 all_instances,
                 do_task=True,
                 do_guidance=False,
