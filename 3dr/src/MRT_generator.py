@@ -358,15 +358,18 @@ class MRTGenerator:
             "format": "mp4"
         }
         
-    def save_configs(self, timestamp: str = None) -> Tuple[str, List[str]]:
-        """Write all config JSONs and batch meta to medias/batch_<timestamp>/shape/."""
+    def save_configs(self, timestamp: str = None, output_dir: str = None) -> Tuple[str, List[str]]:
+        """Write all config JSONs and batch meta to output_dir or medias/batch_<timestamp>/shape/."""
         if timestamp is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # batch under project root (3dr/medias/), 2dr-style: shape (meta), img (task), video (guidance)
+        # batch under output_dir or project root (3dr/medias/), 2dr-style: shape (meta), img (task), video (guidance)
         script_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(script_dir)
-        batch_dir = os.path.join(project_root, "medias", f"batch_{timestamp}")
+        if output_dir:
+            batch_dir = os.path.abspath(output_dir.rstrip(os.sep))
+        else:
+            batch_dir = os.path.join(project_root, "medias", f"batch_{timestamp}")
         os.makedirs(batch_dir, exist_ok=True)
         shape_dir = os.path.join(batch_dir, "shape")
         img_dir = os.path.join(batch_dir, "images")
@@ -493,14 +496,16 @@ class MRTBatchRenderer:
 
 def create_mrt_configs(chiral_json_path: str,
                       easy_instances_per_group: int = 1,
-                      hard_instances_per_group: int = 1) -> Tuple[str, List[str]]:
+                      hard_instances_per_group: int = 1,
+                      output_dir: str = None) -> Tuple[str, List[str]]:
     """
-    Create MRT configs from chiral JSON and save to medias/batch_<timestamp>/shape/.
+    Create MRT configs from chiral JSON and save to output_dir or medias/batch_<timestamp>/shape/.
 
     Args:
         chiral_json_path: Path to chiral voxel variants JSON.
         easy_instances_per_group: Number of Easy instances per voxel group.
         hard_instances_per_group: Number of Hard instances per voxel group.
+        output_dir: Optional. Directory to save batch (default: 3dr/medias/batch_<timestamp>).
 
     Returns:
         (batch_dir, list of config file paths).
@@ -514,7 +519,7 @@ def create_mrt_configs(chiral_json_path: str,
     generator.generate_configs()
     
     # 保存配置
-    batch_dir, config_files = generator.save_configs()
+    batch_dir, config_files = generator.save_configs(output_dir=output_dir)
     
     return batch_dir, config_files
 

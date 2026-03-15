@@ -130,14 +130,15 @@ def generate_task_data(batch_dir: Path, instance_id: str, category_override: Opt
     )
 
 
-def generate_all_task_data(batch_dir: Path, output_file: Path, data_path: str, category_mix: Optional[str] = None) -> None:
-    """Write assign_data.jsonl. category_mix: None|'easy'|'hard'|'mixed'."""
+def generate_all_task_data(batch_dir: Path, output_file: Path, category_mix: Optional[str] = None) -> None:
+    """Write assign_data.jsonl. Visual paths use batch_dir as prefix. category_mix: None|'easy'|'hard'|'mixed'."""
     instances = []
     shape_dir = batch_dir / 'shape'
     if not shape_dir.is_dir():
         print(f"Error: shape directory not found: {shape_dir}")
         return
     category_mix = category_mix or "easy"
+    prefix = str(batch_dir.resolve())
     for json_file in sorted(shape_dir.glob('2dr_*.json')):
         instance_id = json_file.stem
         task_data = generate_task_data(batch_dir, instance_id, category_override=category_mix)
@@ -146,9 +147,9 @@ def generate_all_task_data(batch_dir: Path, output_file: Path, data_path: str, c
     instances.sort(key=lambda x: x.id)
     with open(output_file, 'w', encoding='utf-8') as f:
         for task in instances:
-            visual_input = [{"type": "image", "path": f"{data_path}/img/{img_path}"} for img_path in task.images]
+            visual_input = [{"type": "image", "path": f"{prefix}/img/{img_path}"} for img_path in task.images]
             visual_output = [{
-                "type": "video", "path": f"{data_path}/video/{video_path}",
+                "type": "video", "path": f"{prefix}/video/{video_path}",
                 "fps": 30, "video_start": 0.0, "video_end": task.video_length
             } for video_path in task.guidance]
             task_dict = {
@@ -162,18 +163,17 @@ def generate_all_task_data(batch_dir: Path, output_file: Path, data_path: str, c
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Generate 2DR task JSONL (assign_json)')
+    parser = argparse.ArgumentParser(description='Generate 2DR task JSONL (assign_json). Visual paths use batch_dir as prefix.')
     parser.add_argument('batch_dir', type=str, help='Path to batch directory')
-    parser.add_argument('--data-path', '-d', type=str, default='/root/autodl-fs/data/2dr-training', help='Base path for img/video in JSONL')
     parser.add_argument('--output', '-o', type=str, help='Output JSONL path (default: batch_dir/assign_data.jsonl)')
-    parser.add_argument('--category', type=str, default='easy', choices=['easy', 'hard', 'mixed'], help='Task category: easy (rotation direction in prompt), hard (no direction), mixed (random per instance)')
+    parser.add_argument('--category', type=str, default='easy', choices=['easy', 'hard', 'mixed'], help='Task category')
     args = parser.parse_args()
     batch_dir = Path(args.batch_dir)
     if not batch_dir.exists():
         print(f"Error: Batch directory does not exist: {batch_dir}")
         return
     output_file = Path(args.output) if args.output else batch_dir / 'assign_data.jsonl'
-    generate_all_task_data(batch_dir, output_file, args.data_path.rstrip('/'), category_mix=getattr(args, 'category', 'easy'))
+    generate_all_task_data(batch_dir, output_file, category_mix=getattr(args, 'category', 'easy'))
 
 
 if __name__ == '__main__':

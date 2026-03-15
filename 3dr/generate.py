@@ -4,8 +4,8 @@
 
 Usage:
   python generate.py                         # full pipeline (same as 'all')
-  python generate.py all [--limit-easy N] [--limit-hard N]
-  python generate.py meta
+  python generate.py all [--batch-dir DIR] [--limit-easy N] [--limit-hard N]
+  python generate.py meta [--batch-dir DIR]  # save batch to DIR (default: medias/batch_<timestamp>)
   python generate.py compose <batch_dir>
   python generate.py task <batch_dir> [--worker N]
   python generate.py assign <batch_dir> [-o out.jsonl]
@@ -34,10 +34,12 @@ def run_meta(args):
     if not chiral_path.exists():
         print("chiral_voxels_variants.json not found at", chiral_path)
         sys.exit(1)
+    output_dir = getattr(args, "batch_output", None) or getattr(args, "output_dir", None)
     batch_dir, config_files = create_mrt_configs(
         str(chiral_path),
         easy_instances_per_group=getattr(args, "easy", None) or EASY_INSTANCE_NUM,
         hard_instances_per_group=getattr(args, "hard", None) or HARD_INSTANCE_NUM,
+        output_dir=output_dir,
     )
     print("Batch dir:", batch_dir)
     return batch_dir
@@ -115,11 +117,13 @@ def main():
     parser = argparse.ArgumentParser(description="3dr: one-shot meta->compose->task->assign or single step")
     parser.add_argument("command", nargs="?", default="all", choices=["all", "meta", "compose", "task", "assign"])
     parser.add_argument("batch_dir", nargs="?", type=str, help="Batch dir (required for compose / task / assign)")
+    parser.add_argument("--batch-dir", "--output-dir", dest="batch_output", type=str, default=None,
+                        help="Save batch to this directory (meta/all). Default: medias/batch_<timestamp>")
     parser.add_argument("--easy", type=int, default=None, help="Easy instances per group (meta)")
     parser.add_argument("--hard", type=int, default=None, help="Hard instances per group (meta)")
     parser.add_argument("--limit-easy", type=int, default=None)
     parser.add_argument("--limit-hard", type=int, default=None)
-    parser.add_argument("--worker", "-w", type=int, default=1, help="Workers for task+guidance render")
+    parser.add_argument("--worker", "-w", type=int, default=1, help="Parallel workers (subprocess mode defaults to min(4,cpu_count) if 1)")
     parser.add_argument("-o", "--output", type=str, default=None, help="Assign output JSONL path")
     args = parser.parse_args()
 

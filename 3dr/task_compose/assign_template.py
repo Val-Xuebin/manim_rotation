@@ -16,8 +16,7 @@ from dataclasses import dataclass
 # QUESTION_TEMPLATE = """Given the original cubestack <image1>, which cubestack shown in the following images can be obtained by rotating or spining the original cubestack?\nA. <image2> B. <image3> C. <image4> D. <image5>. Answer with one letter: A, B, C or D."""
 QUESTION_TEMPLATE = """Given the original cubestack <visual>, which cubestack shown in the following images can be obtained by rotating or spining the original cubestack?\nA. <visual> B. <visual> C. <visual> D. <visual>. Answer with one letter: A, B, C or D."""
 
-# Path configuration
-PATH_PREFIX = "/root/autodl-fs/data/3dr-training"
+# Path configuration: visual paths in assign_data.jsonl use batch_dir as prefix (batch_dir/images/, batch_dir/video/).
 DEFAULT_FPS = 30
 DEFAULT_VIDEO_START = 0.0
 
@@ -53,11 +52,11 @@ EASY_REASONS = {
 #     'mirror1': '<guidance_mirror1>\nAfter visually rotating the original, the cubestack of this option is mirror-symmetric to the original and cannot be obtained by rotating the original cubestack',
 #     'mirror2': '<guidance_mirror2>\n the cubestack is mirror-symmetric to the original under my imagination rotation and cannot be obtained by rotating the original cubestack',
 #     'move': {
-#         'under_guidance': "<guidance_move> After viusally imagine the original cubastack rotating to the same pose as the option, it is obvious that the option structure is obtained by moving one cube from the original structure, so it can't be produced through rotating the original",
+#         'under_guidance': "<guidance_move> After visually imagine the original cubastack rotating to the same pose as the option, it is obvious that the option structure is obtained by moving one cube from the original structure, so it can't be produced through rotating the original",
 #         'no_guidance': "structure is obtained by moving one cube from the original structure, so it can't be produced through rotating the original"
 #     },
 #     'remove': {
-#         'under_guidance': '<guidance_remove> After viusally imagine the original cubastack rotating to the same pose, I can notice that the option misses one cube compared to the original cubestack, so it cannot be obtained by rotating the original',
+#         'under_guidance': '<guidance_remove> After visually imagine the original cubastack rotating to the same pose, I can notice that the option misses one cube compared to the original cubestack, so it cannot be obtained by rotating the original',
 #         'no_guidance': 'misses one cube compared to the original cubestack, so it cannot be obtained by rotating the original'
 #     },
 # }
@@ -67,11 +66,11 @@ HARD_REASONS = {
     'mirror1': '<visual>\nAfter visually rotating the original, the cubestack of this option is mirror-symmetric to the original and cannot be obtained by rotating the original cubestack',
     'mirror2': '<visual>\n the cubestack is mirror-symmetric to the original under my imagination rotation and cannot be obtained by rotating the original cubestack',
     'move': {
-        'under_guidance': "<visual> After viusally imagine the original cubastack rotating to the same pose as the option, it is obvious that the option structure is obtained by moving one cube from the original structure, so it can't be produced through rotating the original",
+        'under_guidance': "<visual> After visually imagine the original cubastack rotating to the same pose as the option, it is obvious that the option structure is obtained by moving one cube from the original structure, so it can't be produced through rotating the original",
         'no_guidance': "structure is obtained by moving one cube from the original structure, so it can't be produced through rotating the original"
     },
     'remove': {
-        'under_guidance': '<visual> After viusally imagine the original cubastack rotating to the same pose, I can notice that the option misses one cube compared to the original cubestack, so it cannot be obtained by rotating the original',
+        'under_guidance': '<visual> After visually imagine the original cubastack rotating to the same pose, I can notice that the option misses one cube compared to the original cubestack, so it cannot be obtained by rotating the original',
         'no_guidance': 'misses one cube compared to the original cubestack, so it cannot be obtained by rotating the original'
     },
 }
@@ -324,6 +323,7 @@ def generate_task_data(
 ) -> Optional[TaskData]:
     """
     Generate task data. Flat (2dr-style): pass batch_dir + instance_id. Legacy: pass instance_dir.
+    Visual paths use batch_dir as prefix (batch_dir/images/, batch_dir/video/).
     """
     if instance_id and batch_dir:
         pass
@@ -332,6 +332,8 @@ def generate_task_data(
         batch_dir = instance_dir.parent.parent if (instance_dir.parent.name == "images") else instance_dir.parent
     else:
         return None
+
+    prefix = str(batch_dir.resolve())
 
     if instance_id.startswith("mrt_e"):
         category = "easy"
@@ -351,7 +353,7 @@ def generate_task_data(
     video_dir = batch_dir / "video"
     flat = instance_dir is None
     if flat:
-        visual_input = [{"type": "image", "path": f"{PATH_PREFIX}/images/{fn}"} for fn in image_filenames]
+        visual_input = [{"type": "image", "path": f"{prefix}/images/{fn}"} for fn in image_filenames]
         guidance_filenames = get_guidance_order(assign, instance_id, category, modify_type)
         visual_output = []
         for guidance_filename in guidance_filenames:
@@ -361,7 +363,7 @@ def generate_task_data(
             video_duration = get_video_duration(video_path_obj) if video_path_obj.exists() else 2.0
             visual_output.append({
                 "type": "video",
-                "path": f"{PATH_PREFIX}/video/{guidance_filename}",
+                "path": f"{prefix}/video/{guidance_filename}",
                 "fps": DEFAULT_FPS,
                 "video_start": DEFAULT_VIDEO_START,
                 "video_end": video_duration,
@@ -371,7 +373,7 @@ def generate_task_data(
         nested = (batch_dir / "video" / instance_id).is_dir()
         visual_input = []
         for img_filename in image_filenames:
-            path = f"{PATH_PREFIX}/images/{instance_id}/{img_filename}" if nested else f"{PATH_PREFIX}/{instance_id}/task/{img_filename}"
+            path = f"{prefix}/images/{instance_id}/{img_filename}" if nested else f"{prefix}/{instance_id}/task/{img_filename}"
             visual_input.append({"type": "image", "path": path})
         guidance_filenames = get_guidance_order(assign, instance_id, category, modify_type)
         visual_output = []
@@ -380,7 +382,7 @@ def generate_task_data(
                 continue
             video_path_obj = guidance_dir / guidance_filename
             video_duration = get_video_duration(video_path_obj) if video_path_obj.exists() else 2.0
-            path = f"{PATH_PREFIX}/video/{instance_id}/{guidance_filename}" if nested else f"{PATH_PREFIX}/{instance_id}/guidance/{guidance_filename}"
+            path = f"{prefix}/video/{instance_id}/{guidance_filename}" if nested else f"{prefix}/{instance_id}/guidance/{guidance_filename}"
             visual_output.append({
                 "type": "video",
                 "path": path,
@@ -406,13 +408,7 @@ def generate_task_data(
 
 def generate_all_task_data(batch_dir: Path, output_file: Path, limit_easy: int = None, limit_hard: int = None) -> None:
     """
-    Generate task data for all instances in a batch.
-    
-    Args:
-        batch_dir: Path to batch directory
-        output_file: Path to output JSON file
-        limit_easy: Limit number of easy instances to process
-        limit_hard: Limit number of hard instances to process
+    Generate task data for all instances in a batch. Visual paths use batch_dir as prefix.
     """
     instances = []
     easy_count = 0
@@ -493,10 +489,8 @@ def main():
     else:
         output_file = batch_dir / 'assign_data.jsonl'
     
-    # Update DEFAULT_FPS if provided
     global DEFAULT_FPS
     DEFAULT_FPS = args.fps
-    
     generate_all_task_data(batch_dir, output_file)
 
 

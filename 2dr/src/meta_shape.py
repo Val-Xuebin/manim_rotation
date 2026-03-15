@@ -1130,12 +1130,15 @@ def generate_batch_to_directory(
     samples: int = 10,
     grid_size_range: Tuple[int, int] = (1, 3),
     global_mode: str = "color",
-    output_dir: str = "medias"
+    output_dir: str = "medias",
+    batch_dir: str = None,
 ) -> str:
-    '''Generate batch to timestamped dir. Returns batch dir path.'''
-# Batch dir
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    batch_dir = os.path.join(output_dir, f"batch_{timestamp}")
+    '''Generate batch to batch_dir or output_dir/batch_<timestamp>. Returns batch dir path.'''
+    if batch_dir:
+        batch_dir = os.path.abspath(batch_dir.rstrip(os.sep))
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        batch_dir = os.path.join(output_dir, f"batch_{timestamp}")
     shape_dir = os.path.join(batch_dir, "shape")
     
 

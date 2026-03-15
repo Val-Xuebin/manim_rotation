@@ -14,7 +14,10 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
+import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock, Thread
@@ -61,18 +64,21 @@ def _import_renderer():
         sys.path.insert(0, str(project_root))
     try:
         from src.renderer import render_video, extract_frame
-        return render_video, extract_frame
+        return render_video, extract_frame, project_root
     except Exception as e:
         print("[FATAL] cannot import src.renderer:", e, file=sys.stderr)
-    return None, None
+    return None, None, None
 
 
-RENDER_VIDEO, EXTRACT_FRAME = _import_renderer()
+RENDER_VIDEO, EXTRACT_FRAME, PROJECT_ROOT = _import_renderer()
 if RENDER_VIDEO is None or EXTRACT_FRAME is None:
     sys.exit(1)
 
-# Manim is not thread-safe; use a global lock when rendering
+# Manim is not thread-safe; use a global lock when rendering in-process
 RENDER_LOCK = Lock()
+
+# Render each video in a subprocess to avoid "can't start new thread" (thread limit in one process)
+RENDER_IN_SUBPROCESS = os.environ.get("RENDER_IN_SUBPROCESS", "1") == "1"
 
 
 # ============================================================
@@ -210,6 +216,55 @@ def decide_s3_tag(kind: str, by_sr: Dict[Tuple[int, int], JsonEntry]) -> str:
 # 5. render one json with policy
 # ============================================================
 
+def _render_one_subprocess(
+    instance_key: str,
+    entry: JsonEntry,
+    guidance_dir: Path,
+    final_name: Optional[str],
+) -> Optional[Path]:
+    """Run one render in subprocess; subprocess.run() waits and reaps the child (no zombie)."""
+    fd, temp_path = tempfile.mkstemp(suffix=".json", prefix="mrt_render_")
+    try:
+        os.close(fd)
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(entry.data, f, ensure_ascii=False, indent=2)
+        video_path = None
+        for attempt in range(3):
+            try:
+                out = subprocess.run(
+                    [sys.executable, "-m", "src.renderer", "render-one", temp_path],
+                    cwd=str(PROJECT_ROOT),
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    env={**os.environ, "PYTHONPATH": str(PROJECT_ROOT)},
+                )
+                if out.returncode != 0:
+                    raise RuntimeError(out.stderr or out.stdout or "subprocess failed")
+                line = (out.stdout or "").strip().splitlines()[-1] if out.stdout else ""
+                video_path = Path(line.strip()) if line else None
+                if not video_path or not video_path.exists():
+                    raise FileNotFoundError(f"no output: {line}")
+                break
+            except (subprocess.TimeoutExpired, RuntimeError, FileNotFoundError) as e:
+                if attempt >= 2:
+                    tqdm.write(f"[ERROR] {instance_key}: render failed after 3 attempts: {e}")
+                    return None
+                time.sleep(2)
+        guidance_dir.mkdir(parents=True, exist_ok=True)
+        target = guidance_dir / (final_name or f"{entry.path.stem}.mp4")
+        try:
+            shutil.move(str(video_path), str(target))
+        except Exception:
+            shutil.copy2(str(video_path), str(target))
+        return target
+    finally:
+        try:
+            os.unlink(temp_path)
+        except Exception:
+            pass
+
+
 def render_one_json(
     instance_key: str,
     entry: JsonEntry,
@@ -218,22 +273,32 @@ def render_one_json(
     final_name: Optional[str],
 ) -> Optional[Path]:
     """
-    render with manim (serialized, silenced) → move to guidance_dir → return path
+    Render with manim → move to guidance_dir. Default: subprocess per video (avoids thread limit).
+    Set RENDER_IN_SUBPROCESS=0 to render in-process.
     """
-    with RENDER_LOCK, StdSwap():
-        video_path = RENDER_VIDEO(entry.path, entry.data, save_meta=False)
+    if RENDER_IN_SUBPROCESS:
+        return _render_one_subprocess(instance_key, entry, guidance_dir, final_name)
+
+    max_attempts = 3
+    video_path = None
+    for attempt in range(max_attempts):
+        try:
+            with RENDER_LOCK, StdSwap():
+                video_path = RENDER_VIDEO(entry.path, entry.data, save_meta=False)
+            break
+        except Exception as e:
+            if attempt < max_attempts - 1:
+                time.sleep(2)
+                continue
+            tqdm.write(f"[ERROR] {instance_key}: render failed after {max_attempts} attempts: {e}")
+            return None
 
     if not video_path or not video_path.exists():
-        # very important: we are now back to normal stdout
         tqdm.write(f"[ERROR] {instance_key}: render failed for {entry.path.name}")
         return None
 
     guidance_dir.mkdir(parents=True, exist_ok=True)
-    if final_name:
-        target = guidance_dir / final_name
-    else:
-        target = guidance_dir / f"{entry.path.stem}.mp4"
-
+    target = guidance_dir / (final_name or f"{entry.path.stem}.mp4")
     try:
         shutil.move(str(video_path), str(target))
     except Exception:
@@ -464,6 +529,9 @@ def run_instances_with_workers(
     limit_hard: Optional[int],
     worker_count: int,
 ) -> None:
+    # Subprocess mode: multiple workers = parallel render processes; each subprocess is reaped after run()
+    if RENDER_IN_SUBPROCESS and worker_count <= 1:
+        worker_count = min(4, os.cpu_count() or 4)
     shape_dir = batch_dir / "shape"
     if not shape_dir.is_dir():
         shape_dir = batch_dir

@@ -26,6 +26,7 @@ def run_meta(args):
         grid_size_range=args.grid_size_range,
         global_mode=args.mode,
         output_dir=args.output_dir,
+        batch_dir=getattr(args, "batch_output", None),
     )
     print(f"\nBatch dir: {batch_dir}")
     return batch_dir
@@ -45,9 +46,8 @@ def run_assign(batch_dir, args):
     from src.assign_json import generate_all_task_data
     batch_path = Path(batch_dir)
     output_file = getattr(args, "output", None) and Path(args.output) or (batch_path / "assign_data.jsonl")
-    data_path = (getattr(args, "data_path", None) or "/root/autodl-fs/data/2dr-training").rstrip("/")
     category_mix = getattr(args, "assign_category", None) or "easy"
-    generate_all_task_data(batch_path, output_file, data_path, category_mix=category_mix)
+    generate_all_task_data(batch_path, output_file, category_mix=category_mix)
 
 
 def run_pipeline(args):
@@ -70,13 +70,13 @@ def main():
     )
     parser.add_argument("command", nargs="?", default="all", choices=["all", "meta", "render", "assign"], help="all | meta | render | assign")
     parser.add_argument("--samples", "-n", type=int, default=5, help="samples (meta/all)")
-    parser.add_argument("--output-dir", "-O", type=str, default="medias", help="batch root (meta/all)")
+    parser.add_argument("--batch-dir", dest="batch_output", type=str, default=None, help="save batch to this dir (meta/all); default: output_dir/batch_<timestamp>")
+    parser.add_argument("--output-dir", "-O", type=str, default="medias", help="batch root when --batch-dir not set (meta/all)")
     parser.add_argument("--grid-size", type=str, default="2,3", help="grid size range e.g. 2,3 (meta/all)")
     parser.add_argument("--mode", type=str, default="mixed", choices=["mixed", "color", "texture"], help="meta mode (meta/all)")
     parser.add_argument("--render-mode", type=str, default="task", help="render mode (render/all)")
     parser.add_argument("--render-range", "--range", "-r", type=str, default=None, help="range e.g. 5 or [1,5] (render/all)")
     parser.add_argument("--duration", "-D", type=float, default=None, help="video duration sec (render/all)")
-    parser.add_argument("--data-path", "-d", type=str, default="data/2dr", help="JSONL path prefix (assign/all)")
     parser.add_argument("-o", "--output", type=str, default=None, help="assign output JSONL (assign/all)")
     parser.add_argument("--assign-category", type=str, default="easy", choices=["easy", "hard", "mixed"], help="task difficulty (assign/all)")
     parser.add_argument("batch_dir", nargs="?", type=str, help="batch dir (required for render/assign)")

@@ -187,13 +187,19 @@ def render_folder(
 
 
 def main():
+    import sys as _sys
+    if len(_sys.argv) >= 3 and _sys.argv[1] == "render-one":
+        # Single render from CLI for subprocess mode (avoids thread buildup in parent)
+        config_path = Path(_sys.argv[2])
+        result = render_video(config_path, config_data=None, save_meta=False)
+        print(str(result))
+        return
     parser = argparse.ArgumentParser(description="Render MRT JSON configs in a folder (video and/or first/last frames)")
     parser.add_argument("folder", type=str, help="Folder containing JSON configs")
     parser.add_argument("--modes", nargs="+", default=["video"], choices=["video", "first", "last"],
                         help="Modes: video, first, last (multiple allowed)")
     parser.add_argument("--limit", type=int, default=None, help="Process only first N JSONs")
     args = parser.parse_args()
-
     render_folder(Path(args.folder), args.modes, args.limit)
 
 
